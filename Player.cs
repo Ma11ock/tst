@@ -5,8 +5,7 @@ using System;
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
 // up/down.
 
-public class Player : KinematicBody
-{
+public class Player : KinematicBody {
     public float mouseSensitivity = 0.05F;
 
     public Godot.Spatial mHead = null;
@@ -31,44 +30,42 @@ public class Player : KinematicBody
     static public readonly float MAX_ACCEL = 10 * MAX_SPEED;
 
     // Called when the node enters the scene tree for the first time.
-    public override void _Ready()
-	{
+    public override void _Ready() {
         base._Ready();
         mHead = GetNode<Godot.Spatial>("Head");
 
         Input.MouseMode = Input.MouseModeEnum.Captured;
     }
 
-    public override void _Input(InputEvent @event)
-    {
+    public override void _Input(InputEvent @event) {
         base._Input(@event);
 
         // Move head.
-        if(@event is InputEventMouseMotion mouseEvent) {
+        if (@event is InputEventMouseMotion mouseEvent) {
             RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mouseSensitivity));
             mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mouseSensitivity));
-            mHead.Rotation = new Vector3(Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(98)), 0F, 0F);
+            mHead.Rotation = new Vector3(
+                Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(98)), 0F, 0F);
         }
     }
 
-    public override void _PhysicsProcess(float delta)
-    {
+    public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
 
         mVelocity = mVelocity * 0.8F;
 
         mWishDir = new Vector3();
 
-        if(Input.IsActionPressed("move_forward")) {
+        if (Input.IsActionPressed("move_forward")) {
             mWishDir -= Transform.basis.z;
         }
-        if(Input.IsActionPressed("move_backward")) {
+        if (Input.IsActionPressed("move_backward")) {
             mWishDir += Transform.basis.z;
         }
-        if(Input.IsActionPressed("move_left")) {
+        if (Input.IsActionPressed("move_left")) {
             mWishDir -= Transform.basis.x;
         }
-        if(Input.IsActionPressed("move_right")) {
+        if (Input.IsActionPressed("move_right")) {
             mWishDir += Transform.basis.x;
         }
 
@@ -86,8 +83,7 @@ public class Player : KinematicBody
         float change = 0F;
         int blocked = 0;
 
-        if(normal.y > 0) {
-
+        if (normal.y > 0) {
         }
         return 0;
     }
