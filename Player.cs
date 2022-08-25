@@ -17,10 +17,6 @@ public class Player : KinematicBody {
 
     private float mFrameTime = 0F;
 
-    private Vector3 mForward = new Vector3();
-    private Vector3 mBackward = new Vector3();
-    private Vector3 mUp = new Vector3();
-    private Vector3 mWishDir = new Vector3();
     private Vector3 mVelocity = new Vector3();
 
     static public readonly Vector3 PLAYER_MINS = new Vector3(-16F, -16F, -24F);
@@ -28,6 +24,8 @@ public class Player : KinematicBody {
 
     static public readonly float MAX_SPEED = 10;
     static public readonly float MAX_ACCEL = 10 * MAX_SPEED;
+
+    private float horzAcceleration = 10F;
 
     // Called when the node enters the scene tree for the first time.
     public override void _Ready() {
@@ -41,7 +39,9 @@ public class Player : KinematicBody {
         base._Input(@event);
 
         // Move head.
-        if (@event is InputEventMouseMotion mouseEvent) {
+        // Maybe in physics process because it changes wishdir.
+        if (@event is InputEventMouseMotion mouseEvent &&
+            Input.MouseMode == Input.MouseModeEnum.Captured) {
             RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mouseSensitivity));
             mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mouseSensitivity));
             mHead.Rotation = new Vector3(
@@ -49,32 +49,73 @@ public class Player : KinematicBody {
         }
     }
 
+    private Vector3 applyFriction(Vector3 velocity, float frameTime) {
+        return velocity * 0.8F;
+    }
+
+    private Vector3 updateVelocityGround(Vector3 wishDir, Vector3 velocity, float frameTime) {
+        velocity = applyFriction(velocity, frameTime);
+
+        float currentSpeed = velocity.Dot(wishDir);
+        float addSpeed = Mathf.Clamp(MAX_SPEED - currentSpeed, 0F, MAX_ACCEL * frameTime);
+        return velocity + addSpeed * wishDir;
+    }
+
+    private Vector3 updateVelocityAir(Vector3 wishDir, Vector3 velocity, float frameTime) {
+        float currentSpeed = velocity.Dot(wishDir);
+        float addSpeed = Mathf.Clamp(MAX_SPEED - currentSpeed, 0F, MAX_ACCEL * frameTime);
+        return velocity + addSpeed * wishDir;
+    }
+
+    public Vector3 applyGravity(Vector3 velocity, float frameTime) {
+        Vector3 gravityVec = new Vector3();
+        if (!IsOnFloor()) {
+            gravityVec += Vector3.Down * 20 * frameTime;
+        } else {
+            gravityVec = -GetFloorNormal() * 20;
+        }
+
+        if (IsOnFloor() && Input.IsActionPressed("jump")) {
+            gravityVec = Vector3.Up * 30;
+        }
+
+        return velocity * gravityVec;
+    }
+
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
-
-        mVelocity = mVelocity * 0.8F;
-
-        mWishDir = new Vector3();
+        Vector3 wishDir = new Vector3();
 
         if (Input.IsActionPressed("move_forward")) {
-            mWishDir -= Transform.basis.z;
+            wishDir -= Transform.basis.z;
         }
         if (Input.IsActionPressed("move_backward")) {
-            mWishDir += Transform.basis.z;
+            wishDir += Transform.basis.z;
         }
         if (Input.IsActionPressed("move_left")) {
-            mWishDir -= Transform.basis.x;
+            wishDir -= Transform.basis.x;
         }
         if (Input.IsActionPressed("move_right")) {
-            mWishDir += Transform.basis.x;
+            wishDir += Transform.basis.x;
         }
 
-        mWishDir = mWishDir.Normalized();
+        if (Input.IsActionPressed("menu")) {
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+        if (Input.IsMouseButtonPressed(Input.GetMouseButtonMask())) {
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+        // Do not go faster when moving diagonally.
+        wishDir = wishDir.Normalized();
 
-        float currentSpeed = mVelocity.Dot(mWishDir);
-        float addSpeed = Mathf.Clamp(MAX_SPEED - currentSpeed, 0F, MAX_ACCEL * delta);
+        mVelocity = applyGravity(mVelocity, delta);
 
-        mVelocity = mVelocity + addSpeed * mWishDir;
+        if (IsOnFloor()) {
+            mVelocity = updateVelocityGround(wishDir, mVelocity, delta);
+        } else {
+            mVelocity = updateVelocityAir(wishDir, mVelocity, delta);
+        }
+
         MoveAndSlide(mVelocity, Vector3.Up);
     }
 
