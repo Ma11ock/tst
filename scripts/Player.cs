@@ -9,6 +9,7 @@ public class Player : KinematicBody {
     // Children.
     private Godot.Spatial mHead = null;
     private Godot.Camera mCamera = null;
+    private Godot.CollisionShape mFoot = null;
 
     // Quake physics objects.
     static private float gravity = 15F;
@@ -26,18 +27,18 @@ public class Player : KinematicBody {
     private float mJumpImpulse = 4.8F;
     private float mTerminalVelocity = gravity * -5F;
 
-    private Vector3 mSnap = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
-                                           // going down slopes without falling.
+    public Vector3 mSnap { get; private set; } = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
+                                                                // going down slopes without falling.
 
     public Vector3 mVelocity { get; private set; } = Vector3.Zero;
     public Vector3 mWishDir { get; private set; } = Vector3.Zero;
 
     public float mVerticalVelocity { get; private set; } = 0F;  // Vertical component of velocity.
 
-    private bool mWishJump = false;  // If true, player has queued a jump : the jump key can be held
-                                     // down before hitting the ground to jump.
-    private bool mAutoJump = false;  // If true, player has queued a jump : the jump key can be held
-                                     // down before hitting the ground to jump.
+    public bool mWishJump { get; private set; } = false;  // If true, player has queued a jump : the jump key can be held
+                                                          // down before hitting the ground to jump.
+    public bool mAutoJump { get; private set; } = false;  // If true, player has queued a jump : the jump key can be held
+                                                          // down before hitting the ground to jump.
 
     // Called when the node enters the scene tree for the first time.
     public override void _Ready() {
@@ -45,6 +46,7 @@ public class Player : KinematicBody {
 
         mHead = GetNode<Godot.Spatial>("Head");
         mCamera = mHead.GetNode<Godot.Camera>("Camera");
+        mFoot = GetNode<Godot.CollisionShape>("Foot");
 
         Input.MouseMode = Input.MouseModeEnum.Captured;
     }
@@ -102,8 +104,7 @@ public class Player : KinematicBody {
         } else {
             // We're in the air. Do not apply friction
             mSnap = Vector3.Down;
-            mVerticalVelocity = Mathf.Clamp(gravity * delta, 0F, mTerminalVelocity);
-            //mVerticalVelocity -= (mVerticalVelocity < mTerminalVelocity) ? gravity * delta : 0F;
+            mVerticalVelocity -= (mVerticalVelocity >= mTerminalVelocity) ? gravity * delta : 0F;
             MoveAir(mVelocity, delta);
         }
 

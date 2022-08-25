@@ -26,6 +26,8 @@ public class Scene : Spatial {
         mDebugOverlay.Call("AddStat", "Velocity", mPlayer, "mVelocity", false);
         mDebugOverlay.Call("AddStat", "Wishdir", mPlayer, "mWishDir", false);
         mDebugOverlay.Call("AddStat", "Vertical Velocity", mPlayer, "mVerticalVelocity", false);
+        mDebugOverlay.Call("AddStat", "Auto jump", mPlayer, "mAutoJump", false);
+        mDebugOverlay.Call("AddStat", "Wish jump", mPlayer, "mWishJump", false);
     }
 
     public override void _Input(InputEvent @event)
