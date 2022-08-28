@@ -7,16 +7,16 @@ using System;
 
 public class Player : KinematicBody {
     // Children.
+    private Godot.Spatial mBody = null;
     private Godot.Spatial mHead = null;
     private Godot.Camera mCamera = null;
-    private Godot.CollisionShape mFoot = null;
 
     // Quake physics objects.
-    static private float gravity = 15F;
+    static private float gravity = 20F;
     [Export]
     private float mMouseSensitivity = 0.05F;
     [Export]
-    private float mMaxSpeed = 6F;
+    private float mMaxSpeed = 10F;
     [Export]
     private float mMaxAirSpeed = 0.6F;
     [Export]
@@ -24,31 +24,63 @@ public class Player : KinematicBody {
     [Export]
     private float mFriction = 0.9F;
     [Export]
-    private float mJumpImpulse = 4.8F;
+    private float mJumpImpulse = 8F;
     private float mTerminalVelocity = gravity * -5F;
 
-    public Vector3 mSnap { get; private set; } = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
-                                                                // going down slopes without falling.
+    // For stair snapping.
+    public static readonly float STAIRS_FEELING_COEFFICIENT = 2.5F;
+    public static readonly float WALL_MARGIN = 0.001F;
+    public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
+    public static readonly float STEP_MAX_FLOAT_DEGREE = 0F;
+    public static readonly int STEP_CHECK_COUNT = 2;
+
+    private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
+    private Vector3 mHeadOffset = Vector3.Zero;
+    private float mBodyEulerY = 0F;
+    public bool mIsStep { get; private set; } = false;
+
+    // Camera interpolation on stairs.
+    private Vector3 mCameraTargetPos = Vector3.Zero;
+    private float mCameraCoefficient = 1.0F;
+    private float mTimeInAir = 0F;
+
+    public Vector3 mSnap {
+        get; private set;
+    } = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
+                       // going down slopes without falling.
 
     public Vector3 mVelocity { get; private set; } = Vector3.Zero;
     public Vector3 mWishDir { get; private set; } = Vector3.Zero;
 
     public float mVerticalVelocity { get; private set; } = 0F;  // Vertical component of velocity.
 
-    public bool mWishJump { get; private set; } = false;  // If true, player has queued a jump : the jump key can be held
-                                                          // down before hitting the ground to jump.
-    public bool mAutoJump { get; private set; } = false;  // If true, player has queued a jump : the jump key can be held
-                                                          // down before hitting the ground to jump.
+    public bool mWishJump {
+        get; private set;
+    } = false;  // If true, player has queued a jump : the jump key can be held
+                // down before hitting the ground to jump.
+    public bool mAutoJump {
+        get; private set;
+    } = false;  // If true, player has queued a jump : the jump key can be held
+                // down before hitting the ground to jump.
+
+    public override void _Process(float delta) {
+        base._Process(delta);
+    }
 
     // Called when the node enters the scene tree for the first time.
     public override void _Ready() {
         base._Ready();
 
-        mHead = GetNode<Godot.Spatial>("Head");
+        mBody = GetNode<Godot.Spatial>("Body");
+        mHead = mBody.GetNode<Godot.Spatial>("Head");
         mCamera = mHead.GetNode<Godot.Camera>("Camera");
-        mFoot = GetNode<Godot.CollisionShape>("Foot");
 
         Input.MouseMode = Input.MouseModeEnum.Captured;
+        mBodyEulerY = mBody.GlobalTransform.basis.GetEuler().y;
+
+        mCameraTargetPos = mCamera.GlobalTransform.origin;
+        // mCamera.SetAsToplevel(true);
+        mCamera.PhysicsInterpolationMode = Godot.Node.PhysicsInterpolationModeEnum.Off;
     }
 
     public override void _Input(InputEvent @event) {
@@ -58,12 +90,12 @@ public class Player : KinematicBody {
         // Maybe in physics process because it changes wishdir.
         if (@event is InputEventMouseMotion mouseEvent &&
             Input.MouseMode == Input.MouseModeEnum.Captured) {
-            mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mMouseSensitivity));
             RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mMouseSensitivity));
+            mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mMouseSensitivity));
 
-            Vector3 cameraRot = mHead.RotationDegrees;
-            cameraRot.x = Mathf.Clamp(cameraRot.x, -90, 90);
-            mHead.RotationDegrees = cameraRot;
+            float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
+
+            mHead.Rotation = new Vector3(newRotX, mHead.Rotation.y, mHead.Rotation.z);
         }
     }
 
