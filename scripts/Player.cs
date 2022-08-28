@@ -6,7 +6,7 @@ using System;
 // up/down.
 
 public class Player : KinematicBody {
-    // Children.
+    // Children nodes.
     private Godot.Spatial mBody = null;
     private Godot.Spatial mHead = null;
     private Godot.Camera mCamera = null;
@@ -31,15 +31,15 @@ public class Player : KinematicBody {
     public static readonly float STAIRS_FEELING_COEFFICIENT = 2.5F;
     public static readonly float WALL_MARGIN = 0.001F;
     public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
-    public static readonly float STEP_MAX_FLOAT_DEGREE = 0F;
+    public static readonly float STEP_MAX_SLOPE_DEGREE = 0F;
     public static readonly int STEP_CHECK_COUNT = 2;
-
     private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
     private Vector3 mHeadOffset = Vector3.Zero;
     private float mBodyEulerY = 0F;
     public bool mIsStep { get; private set; } = false;
 
     // Camera interpolation on stairs.
+    private float mCameraFeelingCoefficient = 2.5F;
     private Vector3 mCameraTargetPos = Vector3.Zero;
     private float mCameraCoefficient = 1.0F;
     private float mTimeInAir = 0F;
@@ -51,9 +51,8 @@ public class Player : KinematicBody {
 
     public Vector3 mVelocity { get; private set; } = Vector3.Zero;
     public Vector3 mWishDir { get; private set; } = Vector3.Zero;
-
+    public Vector3 mGravityVec { get; private set; } = Vector3.Zero;
     public float mVerticalVelocity { get; private set; } = 0F;  // Vertical component of velocity.
-
     public bool mWishJump {
         get; private set;
     } = false;  // If true, player has queued a jump : the jump key can be held
@@ -65,6 +64,35 @@ public class Player : KinematicBody {
 
     public override void _Process(float delta) {
         base._Process(delta);
+
+        //  Find the current interpolated transform of the target.
+        Transform tr = mHead.GetGlobalTransformInterpolated();
+
+        // Provide some delayed smoothed lerping towards the target position.
+        mCameraTargetPos = Util.Lerp(mCameraTargetPos, tr.origin,
+                                     delta * mVelocity.Length() * STAIRS_FEELING_COEFFICIENT);
+
+        mCamera.Translation = Util.ChangeX(mCamera.Translation, tr.origin.x);
+
+        if (IsOnFloor()) {
+            mTimeInAir = 0F;
+            mCameraCoefficient = 1.0F;
+            mCamera.Translation = Util.ChangeY(mCamera.Translation, mCameraTargetPos.y);
+        } else {
+            mTimeInAir += delta;
+            if (mTimeInAir > 1.0F) {
+                mCameraCoefficient += delta;
+                mCameraCoefficient = Mathf.Clamp(mCameraCoefficient, 2.0F, 4.0F);
+            } else {
+                mCameraCoefficient = 2.0F;
+            }
+
+            mCamera.Translation = Util.ChangeY(mCamera.Translation, mCameraTargetPos.y);
+        }
+
+        mCamera.Translation = Util.ChangeZ(mCamera.Translation, tr.origin.z);
+        mCamera.Rotation =
+            Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
     // Called when the node enters the scene tree for the first time.
@@ -79,7 +107,7 @@ public class Player : KinematicBody {
         mBodyEulerY = mBody.GlobalTransform.basis.GetEuler().y;
 
         mCameraTargetPos = mCamera.GlobalTransform.origin;
-        // mCamera.SetAsToplevel(true);
+        mCamera.SetAsToplevel(true);
         mCamera.PhysicsInterpolationMode = Godot.Node.PhysicsInterpolationModeEnum.Off;
     }
 
@@ -90,12 +118,12 @@ public class Player : KinematicBody {
         // Maybe in physics process because it changes wishdir.
         if (@event is InputEventMouseMotion mouseEvent &&
             Input.MouseMode == Input.MouseModeEnum.Captured) {
-            RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mMouseSensitivity));
+            mBody.RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mMouseSensitivity));
             mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mMouseSensitivity));
 
             float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
 
-            mHead.Rotation = new Vector3(newRotX, mHead.Rotation.y, mHead.Rotation.z);
+            mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
         }
     }
 
@@ -106,16 +134,16 @@ public class Player : KinematicBody {
 
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
+        mIsStep = false;
 
         float forwardInput =
             Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
         float strafeInput =
             Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
         mWishDir = new Vector3(strafeInput, 0F, forwardInput)
-                       .Rotated(Vector3.Up, GlobalTransform.basis.GetEuler().y)
+                       .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
                        .Normalized();
-        QueueJump();
-
+        // Move.
         if (IsOnFloor()) {
             if (mWishJump) {
                 // # If we're on the ground but wish_jump is still true, this means we've just
@@ -127,22 +155,196 @@ public class Player : KinematicBody {
                                             // landing as still in the air.
 
                 mWishJump = false;  // We have jumped, the player needs to press jump key again.
+                mGravityVec += Vector3.Down * gravity * delta;
             } else {
                 // Player is on the ground. Move normally, apply friction.
                 mVerticalVelocity = 0F;
                 mSnap = -GetFloorNormal();
                 MoveGround(mVelocity, delta);
+                mGravityVec = Vector3.Zero;
             }
         } else {
             // We're in the air. Do not apply friction
             mSnap = Vector3.Down;
             mVerticalVelocity -= (mVerticalVelocity >= mTerminalVelocity) ? gravity * delta : 0F;
             MoveAir(mVelocity, delta);
+            mGravityVec += Vector3.Down * gravity * delta;
         }
 
         if (IsOnCeiling()) {
             mVerticalVelocity = 0F;
         }
+
+        QueueJump();
+
+        if (mGravityVec.y >= 0) {
+            for (int i = 0; i < STEP_CHECK_COUNT; i++) {
+                PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
+
+                Vector3 stepHeight = STEP_HEIGHT_DEFAULT - i * mStepCheckHeight;
+                Transform transform3d = GlobalTransform;
+                Vector3 motion = stepHeight;
+                bool isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                     false, testMotionResult);
+
+                if (testMotionResult.CollisionNormal.y < 0) {
+                    continue;
+                }
+
+                if (!isPlayerCollided) {
+                    transform3d.origin += stepHeight;
+                    motion = mVelocity * delta;
+                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                    false, testMotionResult);
+
+                    if (!isPlayerCollided) {
+                        transform3d.origin += motion;
+                        motion = -stepHeight;
+                        isPlayerCollided = PhysicsServer.BodyTestMotion(
+                            GetRid(), transform3d, motion, false, testMotionResult);
+                        if (isPlayerCollided) {
+                            if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
+                                Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
+                                mHeadOffset = -testMotionResult.MotionRemainder;
+                                mIsStep = true;
+                                GlobalTransform = Util.ChangeTFormOrigin(
+                                    GlobalTransform,
+                                    GlobalTransform.origin + -testMotionResult.MotionRemainder);
+                                break;
+                            }
+                        }
+                    } else {
+                        Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
+
+                        transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
+                        motion = (mVelocity * delta).Slide(wallCollisionNormal);
+                        isPlayerCollided = PhysicsServer.BodyTestMotion(
+                            GetRid(), transform3d, motion, false, testMotionResult);
+
+                        if (!isPlayerCollided) {
+                            transform3d.origin += motion;
+                            motion = -stepHeight;
+
+                            isPlayerCollided = PhysicsServer.BodyTestMotion(
+                                GetRid(), transform3d, motion, false, testMotionResult);
+
+                            if (isPlayerCollided &&
+                                testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
+                                    Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
+                                mHeadOffset = -testMotionResult.MotionRemainder;
+                                mIsStep = true;
+                                GlobalTransform = Util.ChangeTFormOrigin(
+                                    GlobalTransform,
+                                    GlobalTransform.origin + -testMotionResult.MotionRemainder);
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
+                    transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
+                    motion = stepHeight;
+                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                    false, testMotionResult);
+
+                    if (!isPlayerCollided) {
+                        transform3d.origin += stepHeight;
+                        motion = (mVelocity * delta).Slide(wallCollisionNormal);
+                        isPlayerCollided = PhysicsServer.BodyTestMotion(
+                            GetRid(), transform3d, motion, false, testMotionResult);
+
+                        if (!isPlayerCollided) {
+                            transform3d.origin += motion;
+                            motion = -stepHeight;
+                            isPlayerCollided = PhysicsServer.BodyTestMotion(
+                                GetRid(), transform3d, motion, false, testMotionResult);
+
+                            if (isPlayerCollided) {
+                                if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
+                                    Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
+                                    mHeadOffset = -testMotionResult.MotionRemainder;
+                                    mIsStep = true;
+                                    GlobalTransform = Util.ChangeTFormOrigin(
+                                        GlobalTransform,
+                                        GlobalTransform.origin + -testMotionResult.MotionRemainder);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        bool isFalling = false;
+
+        if (!mIsStep && IsOnFloor()) {
+            PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
+
+            Vector3 stepHeight = STEP_HEIGHT_DEFAULT;
+            Transform transform3d = GlobalTransform;
+
+            Vector3 motion = mVelocity * delta;
+            bool isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                 false, testMotionResult);
+
+            if (!isPlayerCollided) {
+                transform3d.origin += motion;
+                motion = -stepHeight;
+                isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                false, testMotionResult);
+                if (isPlayerCollided) {
+                    if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
+                        Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
+                        mHeadOffset = testMotionResult.Motion;
+                        mIsStep = true;
+                        GlobalTransform = Util.ChangeTFormOrigin(
+                            GlobalTransform,
+                            GlobalTransform.origin + testMotionResult.MotionRemainder);
+                    }
+                } else {
+                    isFalling = true;
+                }
+
+            } else {
+                if (testMotionResult.CollisionNormal.y == 0) {
+                    Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
+                    transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
+                    motion = (mVelocity * delta).Slide(wallCollisionNormal);
+                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
+                                                                    false, testMotionResult);
+                    if (!isPlayerCollided) {
+                        transform3d.origin += motion;
+                        motion = -stepHeight;
+                        isPlayerCollided = PhysicsServer.BodyTestMotion(
+                            GetRid(), transform3d, motion, false, testMotionResult);
+                        if (isPlayerCollided) {
+                            if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
+                                Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
+                                mHeadOffset = testMotionResult.Motion;
+                                mIsStep = true;
+                                GlobalTransform = Util.ChangeTFormOrigin(
+                                    GlobalTransform,
+                                    GlobalTransform.origin + testMotionResult.MotionRemainder);
+                            }
+                        } else {
+                            isFalling = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!mIsStep) {
+            mHeadOffset = mHeadOffset.LinearInterpolate(
+                Vector3.Zero, delta * mVelocity.Length() * STAIRS_FEELING_COEFFICIENT);
+        }
+
+        if (isFalling) {
+            mSnap = Vector3.Zero;
+        }
+        mVelocity =
+            MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4, Mathf.Deg2Rad(46), false);
     }
 
     // This is were we calculate the speed to add to current velocity
@@ -166,7 +368,6 @@ public class Player : KinematicBody {
     // For now, we're simply substracting 10% from our current velocity. This is not how it works in
     // engines like idTech or Source !
     private Vector3 Friction(Vector3 inputVelocity) {
-        float speed = inputVelocity.Length();
         Vector3 scaledVelocity = inputVelocity * mFriction;
 
         if (scaledVelocity.Length() < (mMaxSpeed / 100F)) {
@@ -201,7 +402,7 @@ public class Player : KinematicBody {
 
         // Then get back our vertical component, and move the player.
         nextVelocity.y = mVerticalVelocity;
-        mVelocity = MoveAndSlideWithSnap(nextVelocity, mSnap, Vector3.Up);
+        mVelocity = nextVelocity;
     }
 
     // Accelerate without applying friction (with a lower allowed max_speed).
@@ -213,6 +414,6 @@ public class Player : KinematicBody {
         nextVelocity = Accelerate(mWishDir, nextVelocity, mAcceleration, mMaxAirSpeed, delta);
 
         nextVelocity.y = mVerticalVelocity;
-        mVelocity = MoveAndSlideWithSnap(nextVelocity, mSnap, Vector3.Up);
+        mVelocity = nextVelocity;
     }
 }
