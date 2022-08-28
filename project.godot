@@ -265,6 +265,8 @@ debug_menu={
 [physics]
 
 common/enable_pause_aware_picking=true
+3d/physics_engine="GodotPhysics"
+common/physics_interpolation=true
 
 [rendering]
 
