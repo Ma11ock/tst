@@ -2,4 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Tommy" Version="3.1.2" />
+  </ItemGroup>
 </Project>

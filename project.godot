@@ -210,6 +210,12 @@ config/name="Tst"
 run/main_scene="res://Spatial.tscn"
 config/icon="res://res/textures/godot.png"
 
+[display]
+
+window/size/borderless=true
+window/size/fullscreen=true
+window/dpi/allow_hidpi=true
+
 [editor_plugins]
 
 enabled=PoolStringArray( "res://addons/qodot/plugin.cfg" )
@@ -219,6 +225,7 @@ enabled=PoolStringArray( "res://addons/qodot/plugin.cfg" )
 input=false
 Mono=false
 template=false
+fullscreen=false
 
 [gui]
 
@@ -264,8 +271,10 @@ debug_menu={
 
 [physics]
 
+common/physics_fps=128
 common/enable_pause_aware_picking=true
 3d/physics_engine="GodotPhysics"
+3d/default_gravity=19.6
 common/physics_interpolation=true
 
 [rendering]

@@ -12,7 +12,7 @@ public class Player : KinematicBody {
     private Godot.Camera mCamera = null;
 
     // Quake physics objects.
-    static private float gravity = 20F;
+    static private float gravity = (float)ProjectSettings.GetSetting("physics/3d/default_gravity");
     [Export]
     private float mMouseSensitivity = 0.05F;
     [Export]
@@ -22,7 +22,7 @@ public class Player : KinematicBody {
     [Export]
     private float mAcceleration = 60F;
     [Export]
-    private float mFriction = 0.9F;
+    private float mFriction = 6F;
     [Export]
     private float mJumpImpulse = 8F;
     private float mTerminalVelocity = gravity * -5F;
@@ -365,11 +365,23 @@ public class Player : KinematicBody {
     }
 
     // Scale down horizontal velocity.
-    // For now, we're simply substracting 10% from our current velocity. This is not how it works in
-    // engines like idTech or Source !
-    private Vector3 Friction(Vector3 inputVelocity) {
-        Vector3 scaledVelocity = inputVelocity * mFriction;
+    private Vector3 Friction(Vector3 inputVelocity, float delta) {
+        float speed = inputVelocity.Length();
+        if (speed < 0.1F) {
+            return new Vector3(0F, inputVelocity.y, 0F);
+        }
 
+        float control = speed;  // speed < 5F ? 5F : speed;
+        float drop = control * mFriction * delta;
+
+        float newSpeed = speed - drop;
+        if (newSpeed < 0F) {
+            newSpeed = 0F;
+        }
+
+        newSpeed /= speed;
+
+        Vector3 scaledVelocity = inputVelocity * newSpeed;
         if (scaledVelocity.Length() < (mMaxSpeed / 100F)) {
             scaledVelocity = Vector3.Zero;
         }
@@ -397,7 +409,7 @@ public class Player : KinematicBody {
         nextVelocity.x = velocity.x;
         nextVelocity.z = velocity.z;
 
-        nextVelocity = Friction(nextVelocity);
+        nextVelocity = Friction(nextVelocity, delta);
         nextVelocity = Accelerate(mWishDir, nextVelocity, mAcceleration, mMaxSpeed, delta);
 
         // Then get back our vertical component, and move the player.
