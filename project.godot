@@ -207,8 +207,17 @@ _global_script_class_icons={
 [application]
 
 config/name="Tst"
+config/description="A game"
 run/main_scene="res://Spatial.tscn"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="tst"
 config/icon="res://res/textures/godot.png"
+
+[autoload]
+
+Autoload="*res://scripts/Autoload.cs"
+Network="*res://scripts/Network.cs"
+Global="*res://scripts/Global.cs"
 
 [display]
 
@@ -226,6 +235,7 @@ input=false
 Mono=false
 template=false
 fullscreen=false
+dir=false
 
 [gui]
 

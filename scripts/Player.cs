@@ -10,6 +10,9 @@ public class Player : KinematicBody {
     private Godot.Spatial mBody = null;
     private Godot.Spatial mHead = null;
     private Godot.Camera mCamera = null;
+    private Godot.MeshInstance mModel = null;
+    private Godot.Timer mNetworkTimer = null;
+    private Godot.Tween mMovementTween = null;
 
     // Quake physics objects.
     static private float gravity = (float)ProjectSettings.GetSetting("physics/3d/default_gravity");
@@ -62,6 +65,11 @@ public class Player : KinematicBody {
     } = false;  // If true, player has queued a jump : the jump key can be held
                 // down before hitting the ground to jump.
 
+    // Networking things.
+    public Vector3 mPuppetVelocity = Vector3.Zero;
+    public Vector3 mPuppetRotation = Vector3.Zero;
+    public Vector3 mPuppetPosition = Vector3.Zero;
+
     public override void _Process(float delta) {
         base._Process(delta);
 
@@ -102,6 +110,8 @@ public class Player : KinematicBody {
         mBody = GetNode<Godot.Spatial>("Body");
         mHead = mBody.GetNode<Godot.Spatial>("Head");
         mCamera = mHead.GetNode<Godot.Camera>("Camera");
+        mNetworkTimer = GetNode<Godot.Timer>("NetworkTickRate");
+        mMovementTween = GetNode<Godot.Tween>("MovementTween");
 
         Input.MouseMode = Input.MouseModeEnum.Captured;
         mBodyEulerY = mBody.GlobalTransform.basis.GetEuler().y;
@@ -109,11 +119,20 @@ public class Player : KinematicBody {
         mCameraTargetPos = mCamera.GlobalTransform.origin;
         mCamera.SetAsToplevel(true);
         mCamera.PhysicsInterpolationMode = Godot.Node.PhysicsInterpolationModeEnum.Off;
+
+        mModel = GetNode<Godot.MeshInstance>("Model");
+
+        GD.Print($"IsNM {IsNetworkMaster()}");
+        mCamera.Current = IsNetworkMaster();
+        mModel.Visible = !IsNetworkMaster();
     }
 
     public override void _Input(InputEvent @event) {
         base._Input(@event);
 
+        if (!IsNetworkMaster()) {
+            return;
+        }
         // Move head.
         // Maybe in physics process because it changes wishdir.
         if (@event is InputEventMouseMotion mouseEvent &&
@@ -134,15 +153,24 @@ public class Player : KinematicBody {
 
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
+
         mIsStep = false;
 
-        float forwardInput =
-            Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
-        float strafeInput =
-            Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
-        mWishDir = new Vector3(strafeInput, 0F, forwardInput)
-                       .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
-                       .Normalized();
+        if (IsNetworkMaster()) {
+            float forwardInput =
+                Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
+            float strafeInput =
+                Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
+            mWishDir = new Vector3(strafeInput, 0F, forwardInput)
+                           .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
+                           .Normalized();
+        } else {
+            GlobalTransform = Util.ChangeTFormOrigin(GlobalTransform, mPuppetPosition);
+
+            mVelocity = new Vector3(mPuppetVelocity.x, mVelocity.y, mPuppetVelocity.z);
+            Rotation = Util.ChangeY(Rotation, mPuppetRotation.y);
+            mHead.Rotation = Util.ChangeX(mHead.Rotation, mPuppetRotation.x);
+        }
         // Move.
         if (IsOnFloor()) {
             if (mWishJump) {
@@ -343,8 +371,11 @@ public class Player : KinematicBody {
         if (isFalling) {
             mSnap = Vector3.Zero;
         }
-        mVelocity =
-            MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4, Mathf.Deg2Rad(46), false);
+        // TODO clients can hack this
+        if (!mMovementTween.IsActive()) {
+            mVelocity = MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4,
+                                             Mathf.Deg2Rad(46), false);
+        }
     }
 
     // This is were we calculate the speed to add to current velocity
@@ -427,5 +458,26 @@ public class Player : KinematicBody {
 
         nextVelocity.y = mVerticalVelocity;
         mVelocity = nextVelocity;
+    }
+
+    [Puppet]
+    public void UpdateState(Vector3 position, Vector3 velocity, Vector3 rotation) {
+        mPuppetPosition = position;
+        mPuppetVelocity = velocity;
+        mPuppetRotation = rotation;
+
+        // Interpolate playermovement for smooth.
+        mMovementTween.InterpolateProperty(this, "global_transform", GlobalTransform,
+                                           new Transform(GlobalTransform.basis, position), 0.1F);
+        mMovementTween.Start();
+    }
+
+    public void _OnNetworkTickRateTimeout() {
+        if (IsNetworkMaster()) {
+            RpcUnreliable("UpdateState", GlobalTransform.origin, mVelocity,
+                          new Vector2(mHead.Rotation.x, mHead.Rotation.y));
+        } else {
+            mNetworkTimer.Stop();
+        }
     }
 }

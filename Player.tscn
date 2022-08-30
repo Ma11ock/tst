@@ -1,9 +1,11 @@
-[gd_scene load_steps=3 format=2]
+[gd_scene load_steps=4 format=2]
 
 [ext_resource path="res://scripts/Player.cs" type="Script" id=1]
 
 [sub_resource type="BoxShape" id=6]
 extents = Vector3( 0.3, 0.9, 0.3 )
+
+[sub_resource type="CubeMesh" id=7]
 
 [node name="Player" type="KinematicBody"]
 script = ExtResource( 1 )
@@ -19,3 +21,15 @@ transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.7, 0 )
 
 [node name="Camera" type="Camera" parent="Body/Head"]
 far = 1000.0
+
+[node name="Model" type="MeshInstance" parent="."]
+transform = Transform( 0.2, 0, 0, 0, 1, 0, 0, 0, 0.2, 0, 1, 0 )
+mesh = SubResource( 7 )
+
+[node name="NetworkTickRate" type="Timer" parent="."]
+wait_time = 0.03
+autostart = true
+
+[node name="MovementTween" type="Tween" parent="."]
+
+[connection signal="timeout" from="NetworkTickRate" to="." method="_OnNetworkTickRateTimeout"]
