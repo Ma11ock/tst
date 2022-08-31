@@ -30,7 +30,6 @@ class Network : Godot.Node {
 
     public void JoinServer() {
         GD.Print("Joining server...");
-
         mClient = new NetworkedMultiplayerENet();
         mClient.CreateClient(mIpAddress, DEFAULT_PORT);
         GetTree().NetworkPeer = mClient;
@@ -46,7 +45,7 @@ class Network : Godot.Node {
     }
 
     public void _ConnectionFailed() {
-        GD.Print("Connection to server. failed.");
+        GD.Print("Connection to server failed.");
         ResetNetworkConnection();
     }
 
@@ -57,6 +56,10 @@ class Network : Godot.Node {
     }
 
     public void _NetworkPeerConnected(int id) {
-        GD.Print($"Player joined with id {id}");
+        if (id == 1) {
+            GD.Print($"Connected to server with network id 1");
+        } else {
+            GD.Print($"Player joined with id {id}");
+        }
     }
 }

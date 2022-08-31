@@ -5,14 +5,149 @@ using System;
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
 // up/down.
 
+namespace Tst {
+[Serializable]
+public enum Action {
+    Nothing,
+    Jump,
+    MoveX,
+    MoveZ,
+    PrimaryFire,
+    SecondaryFire,
+}
+
+[Serializable]
+public class Input : Godot.Object {
+    public Action a { get; private set; } = Action.Nothing;
+    public float strength { get; private set; } = 0F;
+
+    public Input() {
+    }
+
+    public Input(Action a, float strength) {
+        this.a = a;
+        this.strength = strength;
+    }
+
+    public override string ToString() {
+        return $"(Action = {a}, Strength = {strength})";
+    }
+}
+
+[Serializable]
+public class InputPacket : Godot.Object {
+    public Input a1 { get; set; } = new Input();
+    public Input a2 { get; set; } = new Input();
+    public Input a3 { get; set; } = new Input();
+    public Input a4 { get; set; } = new Input();
+    public Input a5 { get; set; } = new Input();
+    public Input a6 { get; set; } = new Input();
+    public Input a7 { get; set; } = new Input();
+    public Input a8 { get; set; } = new Input();
+    public float mouseX { get; set; } = 0F;
+    public float mouseY { get; set; } = 0F;
+
+    public void DeltaMouse(float dx, float dy) {
+        this.mouseX += dx;
+        this.mouseY += dy;
+    }
+
+    public Input this[int i] {
+        get {
+            switch (i) {
+            case 1:
+                return a1;
+            case 2:
+                return a2;
+            case 3:
+                return a3;
+            case 4:
+                return a4;
+            case 5:
+                return a5;
+            case 6:
+                return a6;
+            case 7:
+                return a7;
+            case 8:
+                return a8;
+            default:
+                GD.PrintErr($"Attempt to read keyboard input {i}");
+                break;
+            }
+            return new Input(Action.Nothing, 0F);
+        }
+        set {
+            switch (i) {
+            case 1:
+                a1 = value;
+                break;
+            case 2:
+                a2 = value;
+                break;
+            case 3:
+                a3 = value;
+                break;
+            case 4:
+                a4 = value;
+                break;
+            case 5:
+                a5 = value;
+                break;
+            case 6:
+                a6 = value;
+                break;
+            case 7:
+                a7 = value;
+                break;
+            case 8:
+                a8 = value;
+                break;
+            default:
+                GD.PrintErr($"Attempt to set keyboard input {i}");
+                break;
+            }
+        }
+    }
+
+    public int GetHasCode() {
+        return (int)a1.strength ^ (int)a2.strength ^ (int)a3.strength ^ (int)a4.strength ^
+               (int)a5.strength ^ (int)a6.strength ^ (int)a7.strength ^ (int)a8.strength ^
+               (int)mouseX ^ (int)mouseY;
+    }
+
+    public override string ToString() {
+        return $"({a1}, {a2}, {a3}, {a4}, {a5}, {a6}, {a7}, {a8}, {mouseX}, {mouseY})";
+    }
+}
+}
+
 public class Player : KinematicBody {
     // Children nodes.
     private Godot.Spatial mBody = null;
     private Godot.Spatial mHead = null;
     private Godot.Camera mCamera = null;
     private Godot.MeshInstance mModel = null;
-    private Godot.Timer mNetworkTimer = null;
     private Godot.Tween mMovementTween = null;
+
+    private Tst.InputPacket mInputs = new Tst.InputPacket();
+
+    public bool mIsRealPlayer { get; private set; } = false;
+
+    public void SetRealPlayer() {
+        mIsRealPlayer = true;
+    }
+
+    private int _mNetworkId = 0;
+
+    public int mNetworkId {
+        get => _mNetworkId;
+        set {
+            if (_mNetworkId == 0) {
+                _mNetworkId = value;
+            }
+        }
+    }
 
     // Quake physics objects.
     static private float gravity = (float)ProjectSettings.GetSetting("physics/3d/default_gravity");
@@ -65,10 +200,50 @@ public class Player : KinematicBody {
     } = false;  // If true, player has queued a jump : the jump key can be held
                 // down before hitting the ground to jump.
 
-    // Networking things.
-    public Vector3 mPuppetVelocity = Vector3.Zero;
-    public Vector3 mPuppetRotation = Vector3.Zero;
-    public Vector3 mPuppetPosition = Vector3.Zero;
+    // Called when the node enters the scene tree for the first time.
+    public override void _Ready() {
+        base._Ready();
+
+        mBody = GetNode<Godot.Spatial>("Body");
+        mHead = mBody.GetNode<Godot.Spatial>("Head");
+        mCamera = mHead.GetNode<Godot.Camera>("Camera");
+        mMovementTween = GetNode<Godot.Tween>("MovementTween");
+
+        Input.MouseMode = Input.MouseModeEnum.Captured;
+        mBodyEulerY = mBody.GlobalTransform.basis.GetEuler().y;
+
+        mCameraTargetPos = mCamera.GlobalTransform.origin;
+        mCamera.SetAsToplevel(true);
+        mCamera.PhysicsInterpolationMode = Godot.Node.PhysicsInterpolationModeEnum.Off;
+
+        mModel = GetNode<Godot.MeshInstance>("Model");
+
+        mCamera.Current = mIsRealPlayer;
+        mModel.Visible = !mIsRealPlayer;
+    }
+
+    public override void _Input(InputEvent @event) {
+        base._Input(@event);
+
+        if (!mIsRealPlayer) {
+            return;
+        }
+        // Move head.
+        // Maybe in physics process because it changes wishdir.
+        if (@event is InputEventMouseMotion mouseEvent &&
+            Input.MouseMode == Input.MouseModeEnum.Captured) {
+            float dx = -mouseEvent.Relative.x * mMouseSensitivity;
+            float dy = -mouseEvent.Relative.y * mMouseSensitivity;
+            mBody.RotateY(Mathf.Deg2Rad(dx));
+            mHead.RotateX(Mathf.Deg2Rad(dy));
+
+            float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
+
+            mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
+
+            mInputs.DeltaMouse(dx, dy);
+        }
+    }
 
     public override void _Process(float delta) {
         base._Process(delta);
@@ -103,49 +278,6 @@ public class Player : KinematicBody {
             Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
-    // Called when the node enters the scene tree for the first time.
-    public override void _Ready() {
-        base._Ready();
-
-        mBody = GetNode<Godot.Spatial>("Body");
-        mHead = mBody.GetNode<Godot.Spatial>("Head");
-        mCamera = mHead.GetNode<Godot.Camera>("Camera");
-        mNetworkTimer = GetNode<Godot.Timer>("NetworkTickRate");
-        mMovementTween = GetNode<Godot.Tween>("MovementTween");
-
-        Input.MouseMode = Input.MouseModeEnum.Captured;
-        mBodyEulerY = mBody.GlobalTransform.basis.GetEuler().y;
-
-        mCameraTargetPos = mCamera.GlobalTransform.origin;
-        mCamera.SetAsToplevel(true);
-        mCamera.PhysicsInterpolationMode = Godot.Node.PhysicsInterpolationModeEnum.Off;
-
-        mModel = GetNode<Godot.MeshInstance>("Model");
-
-        GD.Print($"IsNM {IsNetworkMaster()}");
-        mCamera.Current = IsNetworkMaster();
-        mModel.Visible = !IsNetworkMaster();
-    }
-
-    public override void _Input(InputEvent @event) {
-        base._Input(@event);
-
-        if (!IsNetworkMaster()) {
-            return;
-        }
-        // Move head.
-        // Maybe in physics process because it changes wishdir.
-        if (@event is InputEventMouseMotion mouseEvent &&
-            Input.MouseMode == Input.MouseModeEnum.Captured) {
-            mBody.RotateY(Mathf.Deg2Rad(-mouseEvent.Relative.x * mMouseSensitivity));
-            mHead.RotateX(Mathf.Deg2Rad(-mouseEvent.Relative.y * mMouseSensitivity));
-
-            float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
-
-            mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
-        }
-    }
-
     /// Needed for debugging window.
     public bool PlayerIsOnFloor() {
         return IsOnFloor();
@@ -155,8 +287,9 @@ public class Player : KinematicBody {
         base._PhysicsProcess(delta);
 
         mIsStep = false;
+        int inputNum = 1;  // For sending inputs over the network.
 
-        if (IsNetworkMaster()) {
+        if (mIsRealPlayer) {
             float forwardInput =
                 Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
             float strafeInput =
@@ -164,13 +297,12 @@ public class Player : KinematicBody {
             mWishDir = new Vector3(strafeInput, 0F, forwardInput)
                            .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
                            .Normalized();
-        } else {
-            GlobalTransform = Util.ChangeTFormOrigin(GlobalTransform, mPuppetPosition);
-
-            mVelocity = new Vector3(mPuppetVelocity.x, mVelocity.y, mPuppetVelocity.z);
-            Rotation = Util.ChangeY(Rotation, mPuppetRotation.y);
-            mHead.Rotation = Util.ChangeX(mHead.Rotation, mPuppetRotation.x);
+            mInputs[inputNum++] = new Tst.Input(Tst.Action.MoveX, strafeInput);
+            mInputs[inputNum++] = new Tst.Input(Tst.Action.MoveZ, forwardInput);
+            RpcUnreliable("UpdateState", mInputs);
+            // TODO check rest of inputs like shooting.
         }
+
         // Move.
         if (IsOnFloor()) {
             if (mWishJump) {
@@ -371,10 +503,20 @@ public class Player : KinematicBody {
         if (isFalling) {
             mSnap = Vector3.Zero;
         }
-        // TODO clients can hack this
-        if (!mMovementTween.IsActive()) {
-            mVelocity = MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4,
-                                             Mathf.Deg2Rad(46), false);
+        mVelocity =
+            MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4, Mathf.Deg2Rad(46), false);
+
+        if (mIsRealPlayer) {
+            // Interpolate playermovement for smooth.
+            mMovementTween.InterpolateProperty(
+                this, "global_transform", GlobalTransform,
+                new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
+            mMovementTween.Start();
+            // Clear inputs.
+            // The server keeps processing the last inputs until newwer ones are receieved.
+            mInputs = new Tst.InputPacket();
+        } else if (GetTree().IsNetworkServer()) {
+            RpcUnreliable("UpdatePlayer", GlobalTransform, mVelocity);
         }
     }
 
@@ -460,24 +602,28 @@ public class Player : KinematicBody {
         mVelocity = nextVelocity;
     }
 
-    [Puppet]
-    public void UpdateState(Vector3 position, Vector3 velocity, Vector3 rotation) {
-        mPuppetPosition = position;
-        mPuppetVelocity = velocity;
-        mPuppetRotation = rotation;
+    [Master]
+    public void UpdateState(Tst.InputPacket packet) {
+        // int id = GetTree().GetRpcSenderId();
+        // // TODO ${CurrentMap}/Player
+        // try {
+        //     Player p = GetTree().Root.GetNode<Player>($"Playground/{id}");
+        //     p.mInputs = packet;
+        // } catch (InvalidCastException ie) {
+        //     GD.PrintErr($"Object at {id} is not a player: {ie.Message}");
+        // } catch (Exception e) {
+        //     GD.PrintErr($"Lookup player {id} failed: {e.Message}");
+        // }
 
-        // Interpolate playermovement for smooth.
-        mMovementTween.InterpolateProperty(this, "global_transform", GlobalTransform,
-                                           new Transform(GlobalTransform.basis, position), 0.1F);
-        mMovementTween.Start();
+        mInputs = packet;
     }
 
-    public void _OnNetworkTickRateTimeout() {
-        if (IsNetworkMaster()) {
-            RpcUnreliable("UpdateState", GlobalTransform.origin, mVelocity,
-                          new Vector2(mHead.Rotation.x, mHead.Rotation.y));
-        } else {
-            mNetworkTimer.Stop();
+    [Puppet]
+    public void UpdatePlayer(Transform globalTransform, Vector3 velocity) {
+        // GD.Print($"Got back {globalTransform}, {velocity}");
+        if (!NetworkSetup.IsServer) {
+            GlobalTransform = globalTransform;
+            mVelocity = velocity;
         }
     }
 }

@@ -26,10 +26,4 @@ far = 1000.0
 transform = Transform( 0.2, 0, 0, 0, 1, 0, 0, 0, 0.2, 0, 1, 0 )
 mesh = SubResource( 7 )
 
-[node name="NetworkTickRate" type="Timer" parent="."]
-wait_time = 0.03
-autostart = true
-
 [node name="MovementTween" type="Tween" parent="."]
-
-[connection signal="timeout" from="NetworkTickRate" to="." method="_OnNetworkTickRateTimeout"]

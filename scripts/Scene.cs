@@ -81,12 +81,36 @@ public class Scene : Spatial {
 
     public void _InstancePlayer(int id) {
         // Make a new player and add it to the scene.
-        Godot.KinematicBody playerInstance = (Godot.KinematicBody)mPlayer.Instance();
-        playerInstance.SetNetworkMaster(id);
-        playerInstance.Name = id.ToString();
+        Player playerInstance = (Player)mPlayer.Instance();
+        //playerInstance.SetNetworkMaster(id);
+        if(id == 1) {
+            // We are a client. Connected to the server.
+            // We're creating this client's player object.
+            playerInstance.SetRealPlayer();
+            playerInstance.mNetworkId = GetTree().GetNetworkUniqueId();
+            playerInstance.Name = GetTree().GetNetworkUniqueId().ToString();
+            GD.Print($"Your player id is {playerInstance.Name}");
+        } else {
+            // We are the server. Connected to a client.
+            // Set the ID to the one we were given by RPC.
+            playerInstance.mNetworkId = id;
+            playerInstance.Name = id.ToString();
+            playerInstance.mNetworkId = id;
+            GD.Print($"Created player for client {playerInstance.Name}");
+        }
         AddChild(playerInstance);
 
         playerInstance.GlobalTransform =
             Util.ChangeTFormOrigin(playerInstance.GlobalTransform, new Vector3(0F, 15F, 0F));
+
+        // if(GetTree().IsNetworkServer() && !HasNode("1")) {
+        //     // Make the server master "player" object for sending RPC.
+        //     Player masterPlayerInstance = (Player)mPlayer.Instance();
+        //     masterPlayerInstance.Name = "1";
+
+        //     AddChild(masterPlayerInstance);
+        //     masterPlayerInstance.GlobalTransform =
+        //         Util.ChangeTFormOrigin(masterPlayerInstance.GlobalTransform, new Vector3(0F, 0.15F, 0F));
+        // }
     }
 }
