@@ -1,123 +1,39 @@
 using Godot;
-using System;
 
 // Notes on Quake's movement code: It's coordinate system is different to that
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
 // up/down.
 
 namespace Tst {
-[Serializable]
-public enum Action {
-    Nothing,
-    Jump,
-    MoveX,
-    MoveZ,
-    PrimaryFire,
-    SecondaryFire,
-}
+public struct Input {
+    public float mouseX;
+    public float mouseY;
+    public float strafe;
+    public float forwards;
 
-[Serializable]
-public class Input : Godot.Object {
-    public Action a { get; private set; } = Action.Nothing;
-    public float strength { get; private set; } = 0F;
-
-    public Input() {
+    public Input(float mouseX, float mouseY, float strafe, float forwards) {
+        this.mouseX = mouseX;
+        this.mouseY = mouseY;
+        this.strafe = strafe;
+        this.forwards = forwards;
     }
 
-    public Input(Action a, float strength) {
-        this.a = a;
-        this.strength = strength;
+    public Input DeltaMouse(float dx, float dy) {
+        return new Input(mouseX + dx, mouseY + dy, strafe, forwards);
     }
 
-    public override string ToString() {
-        return $"(Action = {a}, Strength = {strength})";
-    }
-}
-
-[Serializable]
-public class InputPacket : Godot.Object {
-    public Input a1 { get; set; } = new Input();
-    public Input a2 { get; set; } = new Input();
-    public Input a3 { get; set; } = new Input();
-    public Input a4 { get; set; } = new Input();
-    public Input a5 { get; set; } = new Input();
-    public Input a6 { get; set; } = new Input();
-    public Input a7 { get; set; } = new Input();
-    public Input a8 { get; set; } = new Input();
-    public float mouseX { get; set; } = 0F;
-    public float mouseY { get; set; } = 0F;
-
-    public void DeltaMouse(float dx, float dy) {
-        this.mouseX += dx;
-        this.mouseY += dy;
-    }
-
-    public Input this[int i] {
-        get {
-            switch (i) {
-            case 1:
-                return a1;
-            case 2:
-                return a2;
-            case 3:
-                return a3;
-            case 4:
-                return a4;
-            case 5:
-                return a5;
-            case 6:
-                return a6;
-            case 7:
-                return a7;
-            case 8:
-                return a8;
-            default:
-                GD.PrintErr($"Attempt to read keyboard input {i}");
-                break;
-            }
-            return new Input(Action.Nothing, 0F);
-        }
-        set {
-            switch (i) {
-            case 1:
-                a1 = value;
-                break;
-            case 2:
-                a2 = value;
-                break;
-            case 3:
-                a3 = value;
-                break;
-            case 4:
-                a4 = value;
-                break;
-            case 5:
-                a5 = value;
-                break;
-            case 6:
-                a6 = value;
-                break;
-            case 7:
-                a7 = value;
-                break;
-            case 8:
-                a8 = value;
-                break;
-            default:
-                GD.PrintErr($"Attempt to set keyboard input {i}");
-                break;
-            }
-        }
-    }
-
-    public int GetHasCode() {
-        return (int)a1.strength ^ (int)a2.strength ^ (int)a3.strength ^ (int)a4.strength ^
-               (int)a5.strength ^ (int)a6.strength ^ (int)a7.strength ^ (int)a8.strength ^
-               (int)mouseX ^ (int)mouseY;
+    public Input ResetMouse() {
+        return new Input(0F, 0F, strafe, forwards);
     }
 
     public override string ToString() {
-        return $"({a1}, {a2}, {a3}, {a4}, {a5}, {a6}, {a7}, {a8}, {mouseX}, {mouseY})";
+        return $"mouseX = {mouseX}, mouseY = {mouseY}, strafe = {strafe}, forwards = {forwards}";
+    }
+}
+
+// Mutable player state. Compacted to make it easier to send over the network.
+public class PlayerState : Godot.Object {
+    public PlayerState() {
     }
 }
 }
@@ -130,7 +46,7 @@ public class Player : KinematicBody {
     private Godot.MeshInstance mModel = null;
     private Godot.Tween mMovementTween = null;
 
-    private Tst.InputPacket mInputs = new Tst.InputPacket();
+    public Tst.Input mInputs { get; private set; } = new Tst.Input();
 
     public bool mIsRealPlayer { get; private set; } = false;
 
@@ -200,6 +116,10 @@ public class Player : KinematicBody {
     } = false;  // If true, player has queued a jump : the jump key can be held
                 // down before hitting the ground to jump.
 
+    public string GetInputDescription() => mInputs.ToString();
+
+    public Vector3 GetLookAt() => mHead.Transform.basis.z;
+
     // Called when the node enters the scene tree for the first time.
     public override void _Ready() {
         base._Ready();
@@ -220,6 +140,18 @@ public class Player : KinematicBody {
 
         mCamera.Current = mIsRealPlayer;
         mModel.Visible = !mIsRealPlayer;
+
+        Godot.CanvasLayer mDebugOverlay = GetParent().GetNode<Godot.CanvasLayer>("DebugOverlay");
+
+        // tmp debug overlay system. not very robust :/.
+        mDebugOverlay.Call("AddStat", "Is on floor", this, "PlayerIsOnFloor", true);
+        mDebugOverlay.Call("AddStat", "Velocity", this, "mVelocity", false);
+        mDebugOverlay.Call("AddStat", "Wishdir", this, "mWishDir", false);
+        mDebugOverlay.Call("AddStat", "Vertical Velocity", this, "mVerticalVelocity", false);
+        mDebugOverlay.Call("AddStat", "Auto jump", this, "mAutoJump", false);
+        mDebugOverlay.Call("AddStat", "Wish jump", this, "mWishJump", false);
+        mDebugOverlay.Call("AddStat", "Inputs", this, "GetInputDescription", true);
+        mDebugOverlay.Call("AddStat", "Look at", this, "GetLookAt", true);
     }
 
     public override void _Input(InputEvent @event) {
@@ -228,20 +160,11 @@ public class Player : KinematicBody {
         if (!mIsRealPlayer) {
             return;
         }
-        // Move head.
-        // Maybe in physics process because it changes wishdir.
         if (@event is InputEventMouseMotion mouseEvent &&
             Input.MouseMode == Input.MouseModeEnum.Captured) {
             float dx = -mouseEvent.Relative.x * mMouseSensitivity;
             float dy = -mouseEvent.Relative.y * mMouseSensitivity;
-            mBody.RotateY(Mathf.Deg2Rad(dx));
-            mHead.RotateX(Mathf.Deg2Rad(dy));
-
-            float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
-
-            mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
-
-            mInputs.DeltaMouse(dx, dy);
+            mInputs = mInputs.DeltaMouse(dx, dy);
         }
     }
 
@@ -287,21 +210,25 @@ public class Player : KinematicBody {
         base._PhysicsProcess(delta);
 
         mIsStep = false;
-        int inputNum = 1;  // For sending inputs over the network.
+        // int inputNum = 1;  // For sending inputs over the network.
 
+        float forwardInput = mInputs.forwards;
+        float strafeInput = mInputs.strafe;
         if (mIsRealPlayer) {
-            float forwardInput =
+            forwardInput =
                 Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
-            float strafeInput =
+            strafeInput =
                 Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
-            mWishDir = new Vector3(strafeInput, 0F, forwardInput)
-                           .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
-                           .Normalized();
-            mInputs[inputNum++] = new Tst.Input(Tst.Action.MoveX, strafeInput);
-            mInputs[inputNum++] = new Tst.Input(Tst.Action.MoveZ, forwardInput);
-            RpcUnreliable("UpdateState", mInputs);
-            // TODO check rest of inputs like shooting.
+
+            mInputs = new Tst.Input(mInputs.mouseX, mInputs.mouseY, strafeInput, forwardInput);
+            SendInputPacket();
         }
+        MoveHead(mInputs.mouseX, mInputs.mouseY);
+        mInputs = mInputs.ResetMouse();
+
+        mWishDir = new Vector3(strafeInput, 0F, forwardInput)
+                       .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
+                       .Normalized();
 
         // Move.
         if (IsOnFloor()) {
@@ -512,11 +439,9 @@ public class Player : KinematicBody {
                 this, "global_transform", GlobalTransform,
                 new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
             mMovementTween.Start();
-            // Clear inputs.
-            // The server keeps processing the last inputs until newwer ones are receieved.
-            mInputs = new Tst.InputPacket();
         } else if (GetTree().IsNetworkServer()) {
-            RpcUnreliable("UpdatePlayer", GlobalTransform, mVelocity);
+            RpcUnreliable("UpdatePlayer", GlobalTransform, mHead.GlobalTransform, mVelocity,
+                          mWishDir, mWishJump, mGravityVec, mSnap, mVerticalVelocity);
         }
     }
 
@@ -602,28 +527,55 @@ public class Player : KinematicBody {
         mVelocity = nextVelocity;
     }
 
-    [Master]
-    public void UpdateState(Tst.InputPacket packet) {
-        // int id = GetTree().GetRpcSenderId();
-        // // TODO ${CurrentMap}/Player
-        // try {
-        //     Player p = GetTree().Root.GetNode<Player>($"Playground/{id}");
-        //     p.mInputs = packet;
-        // } catch (InvalidCastException ie) {
-        //     GD.PrintErr($"Object at {id} is not a player: {ie.Message}");
-        // } catch (Exception e) {
-        //     GD.PrintErr($"Lookup player {id} failed: {e.Message}");
-        // }
-
-        mInputs = packet;
+    private void MoveHead(float dx, float dy) {
+        mBody.RotateY(Mathf.Deg2Rad(dx));
+        mHead.RotateX(Mathf.Deg2Rad(dy));
+        float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
+        mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
     }
 
+    [Master]
+    public void SendPlayerInput(float mouseDx, float mouseDy, float strafe, float forward,
+                                bool jump, bool autoJump) {
+        // Ensure all floats are valid values. Reject the input if so.
+        if (!Util.IsFinite(mouseDx)) {
+            GD.Print($"Mouse X value is not finite");
+            return;
+        } else if (!Util.IsFinite(mouseDy)) {
+            GD.Print($"Mouse Y value is not finite");
+            return;
+        } else if (!Util.IsFinite(strafe)) {
+            GD.Print($"Strafe value is not finite");
+            return;
+        } else if (!Util.IsFinite(forward)) {
+            GD.Print($"Forward movement value is not finite");
+            return;
+        }
+
+        mInputs = new Tst.Input(mouseDx, mouseDy, strafe, forward);
+        mWishJump = jump;
+        mAutoJump = autoJump;
+    }
+
+    // TODO turn all of these into a class and send them as one.
     [Puppet]
-    public void UpdatePlayer(Transform globalTransform, Vector3 velocity) {
+    public void UpdatePlayer(Transform globalTransform, Transform headTransform, Vector3 velocity,
+                             Vector3 wishDir, bool wishJump, Vector3 gravityVec, Vector3 snap,
+                             float verticalVelocity) {
         // GD.Print($"Got back {globalTransform}, {velocity}");
         if (!NetworkSetup.IsServer) {
             GlobalTransform = globalTransform;
             mVelocity = velocity;
+            mWishDir = wishDir;
+            mWishJump = wishJump;
+            mGravityVec = gravityVec;
+            mVerticalVelocity = verticalVelocity;
+            mSnap = snap;
         }
+    }
+
+    private void SendInputPacket() {
+        RpcUnreliable("SendPlayerInput", mInputs.mouseX, mInputs.mouseY, mInputs.strafe,
+                      mInputs.forwards, mWishJump, mAutoJump);
     }
 }

@@ -2,7 +2,7 @@ using Godot;
 using System;
 
 public class Scene : Spatial {
-    private Godot.CanvasLayer mDebugOverlay = null;
+    public Godot.CanvasLayer mDebugOverlay { get; set; } = null;
     private Godot.PackedScene mPlayer = null;
     private Global mGlobal = null;
 
@@ -28,12 +28,6 @@ public class Scene : Spatial {
         // mDebugOverlay.Call("AddStat", "Player position", mPlayer, "Position");
         mDebugOverlay.Call("AddStat", "FPS", this, "GetFPS", true);
         mDebugOverlay.Call("AddStat", "Memory Usage (MB)", this, "GetStaticMemoryUsageMB", true);
-        // mDebugOverlay.Call("AddStat", "Is on floor", mPlayer, "PlayerIsOnFloor", true);
-        // mDebugOverlay.Call("AddStat", "Velocity", mPlayer, "mVelocity", false);
-        // mDebugOverlay.Call("AddStat", "Wishdir", mPlayer, "mWishDir", false);
-        // mDebugOverlay.Call("AddStat", "Vertical Velocity", mPlayer, "mVerticalVelocity", false);
-        // mDebugOverlay.Call("AddStat", "Auto jump", mPlayer, "mAutoJump", false);
-        // mDebugOverlay.Call("AddStat", "Wish jump", mPlayer, "mWishJump", false);
 
         // Set up network connection stuff.
         GetTree().Connect("network_peer_connected", this, "_PlayerConnected");
@@ -102,15 +96,5 @@ public class Scene : Spatial {
 
         playerInstance.GlobalTransform =
             Util.ChangeTFormOrigin(playerInstance.GlobalTransform, new Vector3(0F, 15F, 0F));
-
-        // if(GetTree().IsNetworkServer() && !HasNode("1")) {
-        //     // Make the server master "player" object for sending RPC.
-        //     Player masterPlayerInstance = (Player)mPlayer.Instance();
-        //     masterPlayerInstance.Name = "1";
-
-        //     AddChild(masterPlayerInstance);
-        //     masterPlayerInstance.GlobalTransform =
-        //         Util.ChangeTFormOrigin(masterPlayerInstance.GlobalTransform, new Vector3(0F, 0.15F, 0F));
-        // }
     }
 }
