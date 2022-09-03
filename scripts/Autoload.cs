@@ -4,8 +4,17 @@ using System;
 using Tommy;
 
 class Autoload : Node {
+    private Network mNetwork = null;
+
+    private enum SCSettings {
+        None,  // None specified.
+        Server,
+        Client
+    }
+
     public override void _Ready() {
         base._Ready();
+        mNetwork = GetNode<Network>("/root/Network");
         GD.Print("Initializing game...");
 
         // Get global config.
@@ -16,6 +25,65 @@ class Autoload : Node {
         }
         DoConfigAt(OS.GetUserDataDir().PlusFile("config.toml"));
         GD.Print("Done.");
+
+        // Parse cmd args.
+        string[] args = OS.GetCmdlineArgs();
+        string host = mNetwork.mIpAddress;
+        int port = Network.DEFAULT_PORT;
+        SCSettings settings = SCSettings.None;
+        string errstr;
+
+        for (int i = 0; i < args.Length; i++) {
+            switch (args[i]) {
+            case "--mk-server":
+                settings = SCSettings.Server;
+                goto case "--mk-client";
+            case "--mk-client":
+                switch (settings) {
+                case SCSettings.Server:
+                    errstr = $"mk-client and mk-server both specified";
+                    GD.PrintErr(errstr);
+                    throw new InvalidDataException(errstr);
+                case SCSettings.Client:
+                    errstr = $"mk-client specified twice";
+                    GD.PrintErr(errstr);
+                    throw new InvalidDataException(errstr);
+                default:
+                    break;
+                }
+                settings = SCSettings.Client;
+                try {
+                    port = args[++i].ToInt();
+                } catch (Exception e) {
+                    errstr = $"\"{args[i]}\" is not a valid port: {e.Message}";
+                    GD.PrintErr(errstr);
+                    throw new InvalidDataException(errstr);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+
+        switch (settings) {
+        case SCSettings.None:
+            // Turn this Godot instance into a server and make a client.
+            port = mNetwork.CreateServer(0);
+            GD.Print($"Started server on port {port}.");
+            string[] clientArgs = new string[] { "--mk-client", port.ToString() };
+            string exe = "Tst";
+            if (OS.IsDebugBuild()) {
+                exe = "godot-mono";
+            }
+            OS.Execute(exe, clientArgs, false);
+            break;
+        case SCSettings.Server:
+            break;
+        case SCSettings.Client:
+            GD.Print($"Starting client on {host}{port}.");
+            mNetwork.JoinServer(port);
+            break;
+        }
     }
 
     public void SetConfig(TomlTable table) {
@@ -24,7 +92,7 @@ class Autoload : Node {
         foreach(TomlNode node in table) {
             if (node is TomlTable t) {
                 var c = t.Comment;
-                GD.Print($"Comment is : {c}");
+                // GD.Print($"Comment is : {c}");
             }
             // ProjectSettings.SetSetting();
         }

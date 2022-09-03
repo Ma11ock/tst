@@ -1,13 +1,32 @@
 using Godot;
+using System.Net;
+using System.Net.Sockets;
 
 class Network : Godot.Node {
-    public static readonly short DEFAULT_PORT = 28960;
-    public static readonly int MAX_CLIENTS = 6;
+    public const short DEFAULT_PORT = 28960;
+    public const int MAX_CLIENTS = 6;
 
-    public string mIpAddress { get; set; } = "127.0.0.1";
+    public string mIpAddress { get; set; } = "127.0.0.1";  // localhost
 
     public NetworkedMultiplayerENet mServer { get; private set; } = null;
     public NetworkedMultiplayerENet mClient { get; private set; } = null;
+
+    private static readonly IPEndPoint DEFAULT_ENDPOINT =
+        new IPEndPoint(IPAddress.Loopback, port: 0);
+    /// <summary>
+    /// Get a free UDP port from the OS. This function is a temporary solution until Godot 4.
+    /// There could potentially be a race condition where another process uses our port before
+    /// we can bind to it. However, this is unlikely since the OS will usually wait until all
+    /// other free ports are allocated before wrapping around again.
+    /// </summary>
+    /// <returns>A (probably valid) free UDP port.</returns>
+    public static int FreeUDPPort() {
+        using (Socket socket =
+                   new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp)) {
+            socket.Bind(DEFAULT_ENDPOINT);
+            return ((IPEndPoint)socket.LocalEndPoint).Port;
+        }
+    }
 
     public override void _Ready() {
         base._Ready();
@@ -18,20 +37,27 @@ class Network : Godot.Node {
         GetTree().Connect("network_peer_connected", this, "_NetworkPeerConnected");
     }
 
-    public void CreateServer() {
+    public int CreateServer(int port = DEFAULT_PORT) {
         GD.Print("Creating server...");
 
+        if(port == 0) {
+            // Alloc port.
+            port = FreeUDPPort();
+        }
+
         mServer = new NetworkedMultiplayerENet();
-        mServer.CreateServer(DEFAULT_PORT, MAX_CLIENTS);
+        mServer.CreateServer(port, MAX_CLIENTS);
         GetTree().NetworkPeer = mServer;
 
         GD.Print("Done creating server.");
+
+        return port;
     }
 
-    public void JoinServer() {
+    public void JoinServer(int port = DEFAULT_PORT) {
         GD.Print("Joining server...");
         mClient = new NetworkedMultiplayerENet();
-        mClient.CreateClient(mIpAddress, DEFAULT_PORT);
+        mClient.CreateClient(mIpAddress, port);
         GetTree().NetworkPeer = mClient;
     }
 

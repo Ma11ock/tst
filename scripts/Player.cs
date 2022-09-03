@@ -30,12 +30,6 @@ public struct Input {
         return $"mouseX = {mouseX}, mouseY = {mouseY}, strafe = {strafe}, forwards = {forwards}";
     }
 }
-
-// Mutable player state. Compacted to make it easier to send over the network.
-public class PlayerState : Godot.Object {
-    public PlayerState() {
-    }
-}
 }
 
 public class Player : KinematicBody {
@@ -80,24 +74,6 @@ public class Player : KinematicBody {
     [Export]
     private float mJumpImpulse = 8F;
     private float mTerminalVelocity = gravity * -5F;
-
-    // For stair snapping.
-    public static readonly float STAIRS_FEELING_COEFFICIENT = 2.5F;
-    public static readonly float WALL_MARGIN = 0.001F;
-    public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
-    public static readonly float STEP_MAX_SLOPE_DEGREE = 0F;
-    public static readonly int STEP_CHECK_COUNT = 2;
-    private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
-    private Vector3 mHeadOffset = Vector3.Zero;
-    private float mBodyEulerY = 0F;
-    public bool mIsStep { get; private set; } = false;
-
-    // Camera interpolation on stairs.
-    private float mCameraFeelingCoefficient = 2.5F;
-    private Vector3 mCameraTargetPos = Vector3.Zero;
-    private float mCameraCoefficient = 1.0F;
-    private float mTimeInAir = 0F;
-
     public Vector3 mSnap {
         get; private set;
     } = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
@@ -115,6 +91,23 @@ public class Player : KinematicBody {
         get; private set;
     } = false;  // If true, player has queued a jump : the jump key can be held
                 // down before hitting the ground to jump.
+
+    // For stair snapping.
+    public static readonly float STAIRS_FEELING_COEFFICIENT = 2.5F;
+    public static readonly float WALL_MARGIN = 0.001F;
+    public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
+    public static readonly float STEP_MAX_SLOPE_DEGREE = 0F;
+    public static readonly int STEP_CHECK_COUNT = 2;
+    private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
+    private Vector3 mHeadOffset = Vector3.Zero;
+    private float mBodyEulerY = 0F;
+    public bool mIsStep { get; private set; } = false;
+
+    // Camera interpolation on stairs.
+    private float mCameraFeelingCoefficient = 2.5F;
+    private Vector3 mCameraTargetPos = Vector3.Zero;
+    private float mCameraCoefficient = 1.0F;
+    private float mTimeInAir = 0F;
 
     public string GetInputDescription() => mInputs.ToString();
 
@@ -170,7 +163,6 @@ public class Player : KinematicBody {
 
     public override void _Process(float delta) {
         base._Process(delta);
-
         //  Find the current interpolated transform of the target.
         Transform tr = mHead.GetGlobalTransformInterpolated();
 
@@ -440,8 +432,9 @@ public class Player : KinematicBody {
                 new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
             mMovementTween.Start();
         } else if (GetTree().IsNetworkServer()) {
-            RpcUnreliable("UpdatePlayer", GlobalTransform, mHead.GlobalTransform, mVelocity,
-                          mWishDir, mWishJump, mGravityVec, mSnap, mVerticalVelocity);
+            RpcUnreliable("UpdatePlayer", GlobalTransform, mHead.GlobalTransform,
+                          mBody.GlobalTransform, mVelocity, mWishDir, mWishJump, mGravityVec, mSnap,
+                          mVerticalVelocity);
         }
     }
 
@@ -559,8 +552,9 @@ public class Player : KinematicBody {
 
     // TODO turn all of these into a class and send them as one.
     [Puppet]
-    public void UpdatePlayer(Transform globalTransform, Transform headTransform, Vector3 velocity,
-                             Vector3 wishDir, bool wishJump, Vector3 gravityVec, Vector3 snap,
+    public void UpdatePlayer(Transform globalTransform, Transform headTransform,
+                             Transform bodyTransform, Vector3 velocity, Vector3 wishDir,
+                             bool wishJump, Vector3 gravityVec, Vector3 snap,
                              float verticalVelocity) {
         // GD.Print($"Got back {globalTransform}, {velocity}");
         if (!NetworkSetup.IsServer) {
@@ -571,6 +565,8 @@ public class Player : KinematicBody {
             mGravityVec = gravityVec;
             mVerticalVelocity = verticalVelocity;
             mSnap = snap;
+            mHead.GlobalTransform = headTransform;
+            mBody.GlobalTransform = bodyTransform;
         }
     }
 
