@@ -2,6 +2,7 @@ using Godot;
 using System.IO;
 using System;
 using Tommy;
+using System.Runtime;
 
 class Autoload : Node {
     private Network mNetwork = null;
@@ -10,6 +11,13 @@ class Autoload : Node {
         None,  // None specified.
         Server,
         Client
+    }
+
+    private string GetNextArg(string[] args, ref int i) {
+        if (args.Length < ++i) {
+            throw new InvalidDataException($"{args[i - i]} needs an argument");
+        }
+        return args[i];
     }
 
     public override void _Ready() {
@@ -30,38 +38,69 @@ class Autoload : Node {
         string[] args = OS.GetCmdlineArgs();
         string host = mNetwork.mIpAddress;
         int port = Network.DEFAULT_PORT;
+        string nextArg = "";
         SCSettings settings = SCSettings.None;
         string errstr;
 
-        for (int i = 0; i < args.Length; i++) {
-            switch (args[i]) {
-            case "--mk-server":
-                settings = SCSettings.Server;
-                goto case "--mk-client";
-            case "--mk-client":
-                switch (settings) {
-                case SCSettings.Server:
-                    errstr = $"mk-client and mk-server both specified";
-                    GD.PrintErr(errstr);
-                    throw new InvalidDataException(errstr);
-                case SCSettings.Client:
-                    errstr = $"mk-client specified twice";
-                    GD.PrintErr(errstr);
-                    throw new InvalidDataException(errstr);
-                default:
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--mk-server":
+                    settings = SCSettings.Server;
+                    goto case "--mk-client";
+                case "--mk-client":
+                    // Check for cmd arg misconfig.
+                    switch (settings)
+                    {
+                        case SCSettings.Server:
+                            errstr = "mk-client and mk-server both specified";
+                            GD.PrintErr(errstr);
+                            throw new InvalidDataException(errstr);
+                        case SCSettings.Client:
+                            errstr = "mk-client specified twice";
+                            GD.PrintErr(errstr);
+                            throw new InvalidDataException(errstr);
+                    }
+                    // Setup client data.
+                    settings = SCSettings.Client;
+                    try
+                    {
+                        nextArg = GetNextArg(args, ref i);
+                        port = args[i].ToInt();
+                    }
+                    catch (OverflowException e)
+                    {
+                        throw new InvalidDataException(
+                            $"\"{args[i]}\" is not a valid int: {e.Message}.");
+                    }
+                    catch (InvalidDataException e)
+                    {
+                        throw e;
+                    }
+                    catch (Exception)
+                    {
+                        try
+                        {
+                            if (settings == SCSettings.Client)
+                            {
+                                // Maybe it's a url. Try to convert it.
+                                Uri address = new Uri(args[i]);
+                                port = address.Port;
+                                host = address.Host;
+                                break;
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            errstr = $"\"{args[i]}\" is not a valid address: {e.Message}";
+                            GD.PrintErr(errstr);
+                            throw new InvalidDataException(errstr);
+                        }
+                    }
                     break;
-                }
-                settings = SCSettings.Client;
-                try {
-                    port = args[++i].ToInt();
-                } catch (Exception e) {
-                    errstr = $"\"{args[i]}\" is not a valid port: {e.Message}";
-                    GD.PrintErr(errstr);
-                    throw new InvalidDataException(errstr);
-                }
-                break;
-            default:
-                break;
+                default:
+                    throw new InvalidDataException($"Unrecognized cmd argument: ${args[i]}.");
             }
         }
 
@@ -80,7 +119,7 @@ class Autoload : Node {
         case SCSettings.Server:
             break;
         case SCSettings.Client:
-            GD.Print($"Starting client on {host}{port}.");
+            GD.Print($"Starting client on {host}:{port}.");
             mNetwork.JoinServer(port);
             break;
         }
