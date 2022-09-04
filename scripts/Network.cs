@@ -82,10 +82,6 @@ class Network : Godot.Node {
     }
 
     public void _NetworkPeerConnected(int id) {
-        if (id == 1) {
-            GD.Print($"Connected to server with network id 1");
-        } else {
             GD.Print($"Player joined with id {id}");
-        }
     }
 }

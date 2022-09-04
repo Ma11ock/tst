@@ -2,60 +2,73 @@ using Godot;
 using System;
 using System.Collections.Generic;
 
-public class DebugOverlay : CanvasLayer {
-    public struct debugObj {
-        public string statName { get; private set; }
-        public Godot.Object obj { get; private set; }
-        public string fieldName { get; private set; }
-        public bool fieldIsFunc { get; private set; }
+namespace Tst {
+public interface Debuggable {
+    void GetDebug(Control c);
 
-        public debugObj(string statName, Godot.Object obj, string fieldName, bool fieldIsFunc) : this() {
-            this.statName = statName;
-            this.obj = obj;
-            this.fieldName = fieldName;
-            this.fieldIsFunc = fieldIsFunc;
-        }
-    }
+    ulong GetDebugId();
+    void SetDebugId(ulong id);
+}
+}
 
-    private Godot.Label mLabel = null;
-    private List<debugObj> mStats = new List<debugObj>();
+public class DebugOverlay : Control {
+    private Godot.VBoxContainer mVbox = null;
 
-    public override void _Ready()
-    {
+    private ulong mDebugIds = 0;
+
+    private Dictionary<ulong, Tst.Debuggable> mDebuggables =
+        new Dictionary<ulong, Tst.Debuggable>();
+
+    public override void _Ready() {
         base._Ready();
-        mLabel = GetNode<Godot.Label>("Label");
+        mVbox = GetNode<Godot.VBoxContainer>("VBox");
     }
 
-    public override void _Process(float delta)
-    {
+    public override void _Process(float delta) {
         base._Process(delta);
 
-        string labelText = "";
-
-        foreach(debugObj obj in mStats) {
-            System.Object value = null;
-            var gobj = obj.obj;
-            if(gobj != null && IsInstanceValid(gobj)) {
-                if(obj.fieldIsFunc) {
-                    value = gobj.Call(obj.fieldName);
-                } else {
-                    value = gobj.Get(obj.fieldName);
-                }
-            }
-
-            value = (value == null) ? "null" : value;
-
-            labelText += $"{obj.statName}: {value.ToString()}\n";
+        if (!Visible) {
+            return;
         }
 
-        mLabel.Text = labelText;
+        foreach(var kv in mDebuggables) {
+            ulong id = kv.Key;
+            Tst.Debuggable debuggable = kv.Value;
+            Control c = mVbox.GetNodeOrNull<Control>(id.ToString());
+            if (c == null) {
+                GD.PrintErr($"Debuggable with id {id} does not have a control");
+                continue;
+            }
+
+            debuggable.GetDebug(c);
+        }
     }
 
-    public void AddStat(string statName, Godot.Object obj, string fieldName, bool fieldIsFunc) {
-        mStats.Add(new debugObj(statName, obj, fieldName, fieldIsFunc));
+    public void Add<T>(Tst.Debuggable debuggable)
+        where T : Control, new() {
+        if (debuggable == null || debuggable.GetDebugId() != 0) {
+            return;
+        }
+        ulong id = ++mDebugIds;
+        debuggable.SetDebugId(id);
+        mDebuggables[id] = debuggable;
+
+        T item = new T();
+        item.Name = id.ToString();
+        mVbox.AddChild(item);
     }
 
-    public void AddStat(debugObj debugObj) {
-        mStats.Add(debugObj);
+    public void Remove(Tst.Debuggable debuggable) {
+        ulong id = 0;
+        if (debuggable == null || (id = debuggable.GetDebugId()) == 0) {
+            return;
+        }
+        mDebuggables.Remove(id);
+
+        Control c = mVbox.GetNodeOrNull<Control>(id.ToString());
+        if (c != null) {
+            mVbox.RemoveChild(c);
+            c.QueueFree();
+        }
     }
 }

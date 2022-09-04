@@ -1,12 +1,28 @@
 using Godot;
 using System;
 
-public class Scene : Spatial {
-    public Godot.CanvasLayer mDebugOverlay { get; set; } = null;
+public class Scene : Spatial, Tst.Debuggable {
+    public DebugOverlay mDebugOverlay { get; set; } = null;
     private Godot.PackedScene mPlayer = null;
     private Global mGlobal = null;
 
     private Godot.Node mPreloads = null;
+
+    private Console mDebugConsole = null;
+
+    private ulong mDebugId = 0;
+
+    public const string DEBUG_OVERLAY_NAME = "_tst_debug_overlay";
+
+    public void GetDebug(Control c) {
+        if(c is Godot.Label label) {
+            label.Text = $"FPS: {Godot.Engine.GetFramesPerSecond()}\nMemory: {GetStaticMemoryUsageMB():0.000}MB";
+        }
+
+    }
+
+    public ulong GetDebugId() => mDebugId;
+    public void SetDebugId(ulong id) => mDebugId = id;
 
     public float GetFPS() {
         return Godot.Engine.GetFramesPerSecond();
@@ -19,15 +35,13 @@ public class Scene : Spatial {
     public override void _Ready() {
         base._Ready();
 
-        mDebugOverlay = GetNode<Godot.CanvasLayer>("DebugOverlay");
-        // mPlayer = GetNode<Godot.KinematicBody>("Player");
-
         mPreloads = (Godot.Node)((GDScript)GD.Load("res://scripts/Preloads.gd")).New();
         mPlayer = (PackedScene)mPreloads.Get("player");
+        mDebugOverlay = MkInstance<DebugOverlay>("debug_overlay");
+        mDebugOverlay.Name = DEBUG_OVERLAY_NAME;
+        AddChild(mDebugOverlay);
 
-        // mDebugOverlay.Call("AddStat", "Player position", mPlayer, "Position");
-        mDebugOverlay.Call("AddStat", "FPS", this, "GetFPS", true);
-        mDebugOverlay.Call("AddStat", "Memory Usage (MB)", this, "GetStaticMemoryUsageMB", true);
+        mDebugOverlay.Add<Godot.Label>(this);
 
         // Set up network connection stuff.
         GetTree().Connect("network_peer_connected", this, "_PlayerConnected");
@@ -42,6 +56,24 @@ public class Scene : Spatial {
         }
     }
 
+    private T MkInstance<T>(string name)
+        where T : Godot.Node {
+        return (T)((PackedScene)mPreloads.Get(name)).Instance();
+    }
+
+    public override void _Process(float delta) {
+        base._Process(delta);
+    }
+
+    public override void _ExitTree()
+    {
+        base._ExitTree();
+
+        mDebugOverlay.Remove(this);
+        RemoveChild(mDebugOverlay);
+        mDebugOverlay.QueueFree();
+    }
+
     public override void _Input(InputEvent @event) {
         base._Input(@event);
 
@@ -51,6 +83,22 @@ public class Scene : Spatial {
 
         if (@event.IsActionPressed("debug_menu")) {
             mDebugOverlay.Visible = !mDebugOverlay.Visible;
+        }
+
+        if (@event.IsActionPressed("toggle_console")) {
+            if (mDebugConsole == null) {
+                mDebugConsole = MkInstance<Console>("console");
+                mDebugConsole.Name = "_test_debug_console";
+                mDebugConsole.Visible = true;
+                AddChild(mDebugConsole);
+                Input.MouseMode = Input.MouseModeEnum.Visible;
+            } else {
+                mDebugConsole.Visible = false;
+                mDebugConsole.QueueFree();
+                mDebugConsole = null;
+                Input.MouseMode = Input.MouseModeEnum.Captured;
+            }
+            // GetTree().SetInputAsHandled();
         }
 
         if (@event is InputEventMouseButton mevent) {
@@ -76,8 +124,8 @@ public class Scene : Spatial {
     public void _InstancePlayer(int id) {
         // Make a new player and add it to the scene.
         Player playerInstance = (Player)mPlayer.Instance();
-        //playerInstance.SetNetworkMaster(id);
-        if(id == 1) {
+        // playerInstance.SetNetworkMaster(id);
+        if (id == 1) {
             // We are a client. Connected to the server.
             // We're creating this client's player object.
             playerInstance.SetRealPlayer();
