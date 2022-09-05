@@ -83,6 +83,14 @@ public class Scene : Spatial, Tst.Debuggable {
         mDebugConsole.QueueFree();
     }
 
+    public void ToggleDebugOverlay() =>
+        mDebugOverlay.Visible = !mDebugOverlay.Visible;
+
+    public void ToggleDebugOverlay(bool @on) =>
+        mDebugOverlay.Visible = @on;
+
+    public bool IsDebugOverlayVisible() => mDebugOverlay.Visible;
+
     public override void _Input(InputEvent @event) {
         base._Input(@event);
 
@@ -95,12 +103,6 @@ public class Scene : Spatial, Tst.Debuggable {
             mDebugConsole.ToggleVisible();
             GetTree().SetInputAsHandled();
             Global.InputCaptured = !Global.InputCaptured;
-        }
-
-
-        if (@event.IsActionPressed("debug_menu")) {
-            mDebugOverlay.Visible = !mDebugOverlay.Visible;
-            GetTree().SetInputAsHandled();
         }
 
         if (@event is InputEventMouseButton mevent) {

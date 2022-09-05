@@ -20,4 +20,5 @@ margin_right = 1025.0
 margin_bottom = 316.0
 caret_blink = true
 
+[connection signal="text_changed" from="output" to="." method="_OnOutputTextChanged"]
 [connection signal="text_entered" from="input" to="." method="_OnInputTextEntered"]
