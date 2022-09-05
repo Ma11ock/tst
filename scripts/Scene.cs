@@ -43,6 +43,12 @@ public class Scene : Spatial, Tst.Debuggable {
 
         mDebugOverlay.Add<Godot.Label>(this);
 
+        mDebugConsole = MkInstance<Console>("console");
+        mDebugConsole.Name = "_test_debug_console";
+        mDebugConsole.Visible = false;
+        AddChild(mDebugConsole);
+
+
         // Set up network connection stuff.
         GetTree().Connect("network_peer_connected", this, "_PlayerConnected");
         GetTree().Connect("network_peer_disconnected", this, "_PlayerDisconnected");
@@ -72,6 +78,9 @@ public class Scene : Spatial, Tst.Debuggable {
         mDebugOverlay.Remove(this);
         RemoveChild(mDebugOverlay);
         mDebugOverlay.QueueFree();
+
+        RemoveChild(mDebugConsole);
+        mDebugConsole.QueueFree();
     }
 
     public override void _Input(InputEvent @event) {
@@ -81,24 +90,17 @@ public class Scene : Spatial, Tst.Debuggable {
             Input.MouseMode = Input.MouseModeEnum.Visible;
         }
 
-        if (@event.IsActionPressed("debug_menu")) {
-            mDebugOverlay.Visible = !mDebugOverlay.Visible;
+        if (@event.IsActionPressed("toggle_console")) {
+            Global.ToggleMouseSettings();
+            mDebugConsole.ToggleVisible();
+            GetTree().SetInputAsHandled();
+            Global.InputCaptured = !Global.InputCaptured;
         }
 
-        if (@event.IsActionPressed("toggle_console")) {
-            if (mDebugConsole == null) {
-                mDebugConsole = MkInstance<Console>("console");
-                mDebugConsole.Name = "_test_debug_console";
-                mDebugConsole.Visible = true;
-                AddChild(mDebugConsole);
-                Input.MouseMode = Input.MouseModeEnum.Visible;
-            } else {
-                mDebugConsole.Visible = false;
-                mDebugConsole.QueueFree();
-                mDebugConsole = null;
-                Input.MouseMode = Input.MouseModeEnum.Captured;
-            }
-            // GetTree().SetInputAsHandled();
+
+        if (@event.IsActionPressed("debug_menu")) {
+            mDebugOverlay.Visible = !mDebugOverlay.Visible;
+            GetTree().SetInputAsHandled();
         }
 
         if (@event is InputEventMouseButton mevent) {

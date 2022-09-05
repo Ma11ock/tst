@@ -203,7 +203,8 @@ public override void _PhysicsProcess(float delta) {
 
     float forwardInput = mInputs.forwards;
     float strafeInput = mInputs.strafe;
-    if (mIsRealPlayer) {
+    // TODO better way to ignore captured input.
+    if (mIsRealPlayer && !Global.InputCaptured) {
         forwardInput =
             Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
         strafeInput = Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
