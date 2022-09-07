@@ -4,7 +4,7 @@ using Godot;
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
 // up/down.
 
-using Snap = Godot.Collections.Dictionary<string, object>;
+using Snap = Godot.Collections.Dictionary;
 
 namespace Tst {
 
@@ -40,7 +40,7 @@ public struct Input {
 /// <summary>
 /// Player class.
 /// </summary>
-public class Player : KinematicBody, Tst.Debuggable, Tst.Snappable {
+public class Player : KinematicBody, Tst.Debuggable {
     // Children nodes.
     /// <summary>
     /// Body reference.
@@ -97,33 +97,14 @@ public class Player : KinematicBody, Tst.Debuggable, Tst.Snappable {
     }
 
     /// <summary>
-    /// Cache of previous player states. Only used by the server.
-    /// </summary>
-    private Snap mStateCollection = null;
-
-    /// <summary>
-    /// Id of the network. Only settable once.
-    /// </summary>
-    private Tst.SnapAction mSnapshotType = Tst.SnapAction.None;
-
-    private ulong mSnappableId = 0;
-
-    public ulong GetId() => mSnappableId;
-
-    public void SetId(ulong id) => mSnappableId = id;
-
-    public Tst.Snappable Clone() {
-        return new Player();
-    }
-
-    public Tst.SnapAction GetSnapAction() {
-        return mSnapshotType;
-    }
-
-    /// <summary>
     /// Reference to the Scene's debug overlay.
     /// </summary>
     private DebugOverlay mDebugOverlay = null;
+
+    /// <summary>
+    /// Reference to the scene manager.
+    /// </summary>
+    private Scene mSceneRef = null;
 
     // Quake physics objects.
     /// <summary>
@@ -220,6 +201,7 @@ Vertical velocity: {mVerticalVelocity}";
     public override void _Ready() {
         base._Ready();
 
+        mSceneRef = (Scene)GetParent();
         mDebugOverlay = GetParent().GetNodeOrNull<DebugOverlay>(Scene.DEBUG_OVERLAY_NAME);
         if (mDebugOverlay != null) {
             mDebugOverlay.Add<Label>(this);
@@ -240,10 +222,6 @@ Vertical velocity: {mVerticalVelocity}";
 
         mCamera.Current = mIsRealPlayer;
         mModel.Visible = !mIsRealPlayer;
-
-        if (GetTree().IsNetworkServer()) {
-            mStateCollection = new Snap();
-        }
     }
 
     public override void _UnhandledInput(InputEvent @event) {
@@ -348,12 +326,6 @@ Vertical velocity: {mVerticalVelocity}";
             mVerticalVelocity -= (mVerticalVelocity >= mTerminalVelocity) ? gravity * delta : 0F;
             MoveAir(mVelocity, delta);
             mGravityVec += Vector3.Down * gravity * delta;
-        }
-
-        if (mVelocity != Vector3.Zero || mVerticalVelocity != 0F) {
-            mSnapshotType = Tst.SnapAction.Delta;
-        } else {
-            mSnapshotType = Tst.SnapAction.None;
         }
 
         if (IsOnCeiling()) {
@@ -631,54 +603,13 @@ Vertical velocity: {mVerticalVelocity}";
         mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
     }
 
-    T TryGetVOr<T>(Snap dat, string key, T or)
-        where T : unmanaged {
-        T? r = TryGetV<T>(dat, key);
-        return (r == null) ? or : r.Value;
-    }
-
-    T? TryGetV<T>(Snap dat, string key)
-        where T : unmanaged {
-        object obj = null;
-        dat.TryGetValue(key, out obj);
-
-        if (obj == null || !(obj is T)) {
-            return null;
-        }
-
-        return (T)obj;
-    }
-
-    T TryGetR<T>(Snap dat, string key)
-
-        where T : class {
-        object obj = null;
-        dat.TryGetValue(key, out obj);
-
-        if (obj == null || !(obj is T)) {
-            return null;
-        }
-
-        return (T)obj;
-    }
-
-    [Master]
-    public void SendPlayerInput(Snap dat) {
-        int playerId = GetTree().GetRpcSenderId();
-        if (playerId.ToString() != Name) {
-            GD.PrintErr($"Got packet for {playerId}, but it is being applied to player {Name}!");
-            return;
-        }
-        if (TryGetVOr<ulong>(dat, "ts", ulong.MaxValue) <
-            TryGetVOr<ulong>(mStateCollection, "ts", ulong.MaxValue)) {
-            return;
-        }
-        float mouseDx = TryGetVOr<float>(dat, "mDx", 0F);
-        float mouseDy = TryGetVOr<float>(dat, "mDy", 0F);
-        float strafe = TryGetVOr<float>(dat, "str", 0F);
-        float forward = TryGetVOr<float>(dat, "for", 0F);
-        bool jump = TryGetVOr<bool>(dat, "jmp", false);
-        bool autoJump = TryGetVOr<bool>(dat, "ajp", false);
+    public void PlayerInput(Snap dat) {
+        float mouseDx = Util.TryGetVOr<float>(dat, "mDx", 0F);
+        float mouseDy = Util.TryGetVOr<float>(dat, "mDy", 0F);
+        float strafe = Util.TryGetVOr<float>(dat, "str", 0F);
+        float forward = Util.TryGetVOr<float>(dat, "for", 0F);
+        bool jump = Util.TryGetVOr<bool>(dat, "jmp", false);
+        bool autoJump = Util.TryGetVOr<bool>(dat, "ajp", false);
 
         // Ensure all floats are valid values. Reject the input if so.
         if (!Util.IsFinite(mouseDx)) {
@@ -700,19 +631,17 @@ Vertical velocity: {mVerticalVelocity}";
         mAutoJump = autoJump;
     }
 
-    [Puppet]
     public void UpdatePlayer(Snap recv) {
         // TODO instead of current values, should be the cache from the last recv'd snapshot.
-
-        GlobalTransform = TryGetVOr<Transform>(recv, "gt", GlobalTransform);
-        mVelocity = TryGetVOr<Vector3>(recv, "vel", mVelocity);
-        mWishJump = TryGetVOr<bool>(recv, "jmp", false);
-        mGravityVec = TryGetVOr<Vector3>(recv, "grav", mGravityVec);
-        mWishDir = TryGetVOr<Vector3>(recv, "wdir", mWishDir);
-        mVerticalVelocity = TryGetVOr<float>(recv, "vvel", mVerticalVelocity);
-        mSnap = TryGetVOr<Vector3>(recv, "snap", mSnap);
-        mHead.GlobalTransform = TryGetVOr<Transform>(recv, "hgt", mHead.GlobalTransform);
-        mBody.GlobalTransform = TryGetVOr<Transform>(recv, "bgt", mBody.GlobalTransform);
+        GlobalTransform = Util.TryGetVOr<Transform>(recv, "gt", GlobalTransform);
+        mVelocity = Util.TryGetVOr<Vector3>(recv, "vel", mVelocity);
+        mWishJump = Util.TryGetVOr<bool>(recv, "jmp", false);
+        mGravityVec = Util.TryGetVOr<Vector3>(recv, "grav", mGravityVec);
+        mWishDir = Util.TryGetVOr<Vector3>(recv, "wdir", mWishDir);
+        mVerticalVelocity = Util.TryGetVOr<float>(recv, "vvel", mVerticalVelocity);
+        mSnap = Util.TryGetVOr<Vector3>(recv, "snap", mSnap);
+        mHead.GlobalTransform = Util.TryGetVOr<Transform>(recv, "hgt", mHead.GlobalTransform);
+        mBody.GlobalTransform = Util.TryGetVOr<Transform>(recv, "bgt", mBody.GlobalTransform);
     }
 
     public override void _ExitTree() {
@@ -733,11 +662,11 @@ Vertical velocity: {mVerticalVelocity}";
             {"ajp",               mAutoJump},
             { "ts", OS.GetSystemTimeMsecs()}
         };
-        RpcUnreliableId(1, "SendPlayerInput", send);
+        mSceneRef.SendPlayerInput(send);
     }
 
     private void SendPlayerState() {
-        mStateCollection = new Snap() {
+        Snap state = new Snap() {
             {  "gt",       GlobalTransform},
             { "hgt", mHead.GlobalTransform},
             { "bgt", mBody.GlobalTransform},
@@ -749,6 +678,6 @@ Vertical velocity: {mVerticalVelocity}";
             {"vvel",     mVerticalVelocity},
             {"wdir",              mWishDir}
         };
-        RpcUnreliable("UpdatePlayer", mStateCollection);
+        mSceneRef.SendPlayerState(mNetworkId, state);
     }
 }

@@ -1,10 +1,28 @@
 using Godot;
 using System;
 
+using Snap = Godot.Collections.Dictionary;
+
 public class Scene : Spatial, Tst.Debuggable {
     public DebugOverlay mDebugOverlay { get; set; } = null;
     private Godot.PackedScene mPlayer = null;
     private Global mGlobal = null;
+
+    /// <summary>
+    /// State of all physics objects in the world that will be sent over the network. Only used on
+    /// the server.
+    /// </summary>
+    private Snap mWorldState = null;
+
+    /// <summary>
+    /// Timestamp (ms) when the last world snapshot was recv'd. Only used on the client.
+    /// </summary>
+    private ulong mWorldTs = 0;
+
+    /// <summary>
+    /// Cache of previous player states. Only used by the server.
+    /// </summary>
+    private Snap mPlayerStates = null;
 
     private Godot.Node mPreloads = null;
 
@@ -15,10 +33,10 @@ public class Scene : Spatial, Tst.Debuggable {
     public const string DEBUG_OVERLAY_NAME = "_tst_debug_overlay";
 
     public void GetDebug(Control c) {
-        if(c is Godot.Label label) {
-            label.Text = $"FPS: {Godot.Engine.GetFramesPerSecond()}\nMemory: {GetStaticMemoryUsageMB():0.000}MB";
+        if (c is Godot.Label label) {
+            label.Text =
+                $"FPS: {Godot.Engine.GetFramesPerSecond()}\nMemory: {GetStaticMemoryUsageMB():0.000}MB";
         }
-
     }
 
     public ulong GetDebugId() => mDebugId;
@@ -48,7 +66,6 @@ public class Scene : Spatial, Tst.Debuggable {
         mDebugConsole.Visible = false;
         AddChild(mDebugConsole);
 
-
         // Set up network connection stuff.
         GetTree().Connect("network_peer_connected", this, "_PlayerConnected");
         GetTree().Connect("network_peer_disconnected", this, "_PlayerDisconnected");
@@ -60,19 +77,35 @@ public class Scene : Spatial, Tst.Debuggable {
         if (GetTree().NetworkPeer != null) {
             mGlobal.EmitSignal("ToggleNetworkSetup", false);
         }
-    }
 
-    private T MkInstance<T>(string name)
-        where T : Godot.Node {
-        return (T)((PackedScene)mPreloads.Get(name)).Instance();
+        if (GetTree().IsNetworkServer()) {
+            mPlayerStates = new Snap();
+            mWorldState = new Snap();
+        }
     }
 
     public override void _Process(float delta) {
         base._Process(delta);
     }
 
-    public override void _ExitTree()
-    {
+    public override void _PhysicsProcess(float delta) {
+        base._PhysicsProcess(delta);
+
+        if (GetTree().IsNetworkServer() && mPlayerStates.Count > 0) {
+            mWorldState["ts"] = OS.GetSystemTimeMsecs();
+            Snap ps = mPlayerStates.Duplicate(true);
+            mWorldState["plys"] = ps;
+            // Delete unnecessary fields when sending over the network.
+            foreach(var player in mPlayerStates.Keys) {
+                Godot.Collections.Dictionary playerDat = (Godot.Collections.Dictionary)(ps[player]);
+                playerDat.Remove("ts");
+            }
+
+            SendWorldState();
+        }
+    }
+
+    public override void _ExitTree() {
         base._ExitTree();
 
         mDebugOverlay.Remove(this);
@@ -83,13 +116,16 @@ public class Scene : Spatial, Tst.Debuggable {
         mDebugConsole.QueueFree();
     }
 
-    public void ToggleDebugOverlay() =>
-        mDebugOverlay.Visible = !mDebugOverlay.Visible;
+    public void ToggleDebugOverlay() => mDebugOverlay.Visible = !mDebugOverlay.Visible;
 
-    public void ToggleDebugOverlay(bool @on) =>
-        mDebugOverlay.Visible = @on;
+    public void ToggleDebugOverlay(bool @on) => mDebugOverlay.Visible = @on;
 
     public bool IsDebugOverlayVisible() => mDebugOverlay.Visible;
+
+    private T MkInstance<T>(string name)
+        where T : Godot.Node {
+        return (T)((PackedScene)mPreloads.Get(name)).Instance();
+    }
 
     public override void _Input(InputEvent @event) {
         base._Input(@event);
@@ -123,9 +159,14 @@ public class Scene : Spatial, Tst.Debuggable {
         if (HasNode(id.ToString())) {
             GetNode(id.ToString()).QueueFree();
         }
+        mPlayerStates.Remove(id.ToString());
     }
 
     public void _InstancePlayer(int id) {
+        if (HasNode(id.ToString())) {
+            // Already have this player.
+            return;
+        }
         // Make a new player and add it to the scene.
         Player playerInstance = (Player)mPlayer.Instance();
         // playerInstance.SetNetworkMaster(id);
@@ -148,5 +189,97 @@ public class Scene : Spatial, Tst.Debuggable {
 
         playerInstance.GlobalTransform =
             Util.ChangeTFormOrigin(playerInstance.GlobalTransform, new Vector3(0F, 15F, 0F));
+    }
+
+    /// <summary>
+    /// Send the input collected by the client to the server. Used only by the client.
+    /// </summary>
+    public void SendPlayerInput(Snap input) => RpcUnreliableId(1, "RecvPlayerInput", input);
+
+    /// <summary>
+    /// Cache the player state for sending to the clients. Used only by the server.
+    /// </summary>
+    public void SendPlayerState(int playerId,
+                                Snap state) => mPlayerStates[playerId.ToString()] = state;
+
+    /// <summary>
+    /// Send world state to all the clients. Used only by the server.
+    /// </summary>
+    public void SendWorldState() => RpcUnreliableId(0, "RecvWorldState", mWorldState);
+
+    /// <summary>
+    /// Receive input from the player from the client. Used only by the server.
+    /// </summary>
+    [Master]
+    public void RecvPlayerInput(Snap playerState) {
+        string playerId = GetTree().GetRpcSenderId().ToString();
+        if (!HasNode(playerId)) {
+            return;
+        }
+        if (Util.TryGetVOr<ulong>(playerState, "ts", ulong.MaxValue) <
+            Util.TryGetVOr<ulong>(mWorldState, "ts", ulong.MaxValue)) {
+            return;
+        }
+
+        GetNode<Player>(playerId).PlayerInput(playerState);
+    }
+
+    /// <summary>
+    /// Receive world state from the server. Used only by the client.
+    /// </summary>
+    [Puppet]
+    public void RecvWorldState(Snap input) {
+        // Do players first.
+        ulong ts = Util.TryGetVOr<ulong>(input, "ts", ulong.MaxValue);
+        if (ts < mWorldTs) {
+            // The world state we got is too old, skip.
+            return;
+        }
+
+        mWorldTs = ts;
+        Snap players = (Snap)input["plys"];
+        foreach(var key in players.Keys) {
+            string player = "";
+            if (key is string p) {
+                player = p;
+            } else if (key is int pi) {
+                player = pi.ToString();
+            } else {
+                GD.PrintErr(
+                    $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
+            }
+
+            Snap playerDat = null;
+            try {
+                playerDat = (Snap)players[player];
+            } catch (System.Collections.Generic.KeyNotFoundException) {
+                GD.PrintErr($"{player} was not found.");
+            } catch (InvalidCastException e) {
+                GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+            } catch (Exception e) {
+                GD.PrintErr($"Error in receiving world state: e");
+            }
+            if (playerDat == null) {
+                // Skip if error.
+                continue;
+            }
+
+            if (!HasNode(player)) {
+                // TODO dont error, spawn a player.
+                GD.PrintErr($"Player {player} does not exist in scene tree.");
+                continue;
+            }
+
+            Player pl = GetNodeOrNull<Player>(player);
+
+            if (pl == null) {
+                GD.PrintErr($"Object at {player} is not a Player!");
+                continue;
+            }
+
+            pl.UpdatePlayer(playerDat);
+        }
+
+        // Everything else.
     }
 }

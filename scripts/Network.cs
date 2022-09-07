@@ -59,6 +59,7 @@ class Network : Godot.Node {
         mClient = new NetworkedMultiplayerENet();
         mClient.CreateClient(mIpAddress, port);
         GetTree().NetworkPeer = mClient;
+        GD.Print("Joined server.");
     }
 
     public void _ConnectedToServer() {

@@ -1,6 +1,7 @@
 using Godot;
 using System;
 
+using Snap = Godot.Collections.Dictionary;
 class Util {
     public static Vector3 Lerp(Vector3 v1, Vector3 v2,
                                float weight) => new Vector3(Mathf.Lerp(v1.x, v2.x, weight),
@@ -34,4 +35,40 @@ class Util {
     }
 
     public static bool IsFinite(float u) => !(float.IsInfinity(u) || float.IsNaN(u));
+
+    public static T TryGetVOr<T>(Snap dat, string key, T or)
+        where T : unmanaged {
+        T? r = TryGetV<T>(dat, key);
+        return (r == null) ? or : r.Value;
+    }
+
+    public static T? TryGetV<T>(Snap dat, string key)
+        where T : unmanaged {
+        object obj = null;
+        if(dat.Contains(key)) {
+            obj = dat[key];
+        }
+
+        if (obj == null || !(obj is T)) {
+            return null;
+        }
+
+        return (T)obj;
+    }
+
+    public static T TryGetR<T>(Snap dat, string key)
+
+        where T : class {
+        object obj = null;
+        if(dat.Contains(key)) {
+            obj = dat[key];
+        }
+
+        if (obj == null || !(obj is T)) {
+            return null;
+        }
+
+        return (T)obj;
+    }
+
 }
