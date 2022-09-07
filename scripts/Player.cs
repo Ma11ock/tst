@@ -97,6 +97,11 @@ public class Player : KinematicBody, Tst.Debuggable, Tst.Snappable {
     }
 
     /// <summary>
+    /// Cache of previous player states. Only used by the server.
+    /// </summary>
+    private Snap mStateCollection = null;
+
+    /// <summary>
     /// Id of the network. Only settable once.
     /// </summary>
     private Tst.SnapAction mSnapshotType = Tst.SnapAction.None;
@@ -235,6 +240,10 @@ Vertical velocity: {mVerticalVelocity}";
 
         mCamera.Current = mIsRealPlayer;
         mModel.Visible = !mIsRealPlayer;
+
+        if (GetTree().IsNetworkServer()) {
+            mStateCollection = new Snap();
+        }
     }
 
     public override void _UnhandledInput(InputEvent @event) {
@@ -529,6 +538,7 @@ Vertical velocity: {mVerticalVelocity}";
                 new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
             mMovementTween.Start();
         } else if (GetTree().IsNetworkServer()) {
+            SendPlayerState();
         }
     }
 
@@ -654,6 +664,15 @@ Vertical velocity: {mVerticalVelocity}";
 
     [Master]
     public void SendPlayerInput(Snap dat) {
+        int playerId = GetTree().GetRpcSenderId();
+        if (playerId.ToString() != Name) {
+            GD.PrintErr($"Got packet for {playerId}, but it is being applied to player {Name}!");
+            return;
+        }
+        if (TryGetVOr<ulong>(dat, "ts", ulong.MaxValue) <
+            TryGetVOr<ulong>(mStateCollection, "ts", ulong.MaxValue)) {
+            return;
+        }
         float mouseDx = TryGetVOr<float>(dat, "mDx", 0F);
         float mouseDy = TryGetVOr<float>(dat, "mDy", 0F);
         float strafe = TryGetVOr<float>(dat, "str", 0F);
@@ -684,28 +703,16 @@ Vertical velocity: {mVerticalVelocity}";
     [Puppet]
     public void UpdatePlayer(Snap recv) {
         // TODO instead of current values, should be the cache from the last recv'd snapshot.
-        Transform globalTransform = TryGetVOr<Transform>(recv, "gt", GlobalTransform);
-        Vector3 velocity = TryGetVOr<Vector3>(recv, "vel", mVelocity);
-        bool wishJump = TryGetVOr<bool>(recv, "jmp", false);
-        Vector3 gravityVec = TryGetVOr<Vector3>(recv, "grav", mGravityVec);
-        Vector3 wishDir = TryGetVOr<Vector3>(recv, "wdir", mWishDir);
-        float verticalVelocity = TryGetVOr<float>(recv, "vvel", mVerticalVelocity);
-        Vector3 snap = TryGetVOr<Vector3>(recv, "snap", mSnap);
-        Transform headTransform = TryGetVOr<Transform>(recv, "hgt", mHead.GlobalTransform);
-        Transform bodyTransform = TryGetVOr<Transform>(recv, "bgt", mBody.GlobalTransform);
 
-        // GD.Print($"Got back {globalTransform}, {velocity}");
-        if (!NetworkSetup.IsServer) {
-            GlobalTransform = globalTransform;
-            mVelocity = velocity;
-            mWishDir = wishDir;
-            mWishJump = wishJump;
-            mGravityVec = gravityVec;
-            mVerticalVelocity = verticalVelocity;
-            mSnap = snap;
-            mHead.GlobalTransform = headTransform;
-            mBody.GlobalTransform = bodyTransform;
-        }
+        GlobalTransform = TryGetVOr<Transform>(recv, "gt", GlobalTransform);
+        mVelocity = TryGetVOr<Vector3>(recv, "vel", mVelocity);
+        mWishJump = TryGetVOr<bool>(recv, "jmp", false);
+        mGravityVec = TryGetVOr<Vector3>(recv, "grav", mGravityVec);
+        mWishDir = TryGetVOr<Vector3>(recv, "wdir", mWishDir);
+        mVerticalVelocity = TryGetVOr<float>(recv, "vvel", mVerticalVelocity);
+        mSnap = TryGetVOr<Vector3>(recv, "snap", mSnap);
+        mHead.GlobalTransform = TryGetVOr<Transform>(recv, "hgt", mHead.GlobalTransform);
+        mBody.GlobalTransform = TryGetVOr<Transform>(recv, "bgt", mBody.GlobalTransform);
     }
 
     public override void _ExitTree() {
@@ -718,18 +725,19 @@ Vertical velocity: {mVerticalVelocity}";
 
     private void SendInputPacket() {
         Snap send = new Snap() {
-            {"mDx",   mInputs.mouseX},
-            {"mDy",   mInputs.mouseY},
-            {"str",   mInputs.strafe},
-            {"for", mInputs.forwards},
-            {"jmp",        mWishJump},
-            {"ajp",        mAutoJump}
+            {"mDx",          mInputs.mouseX},
+            {"mDy",          mInputs.mouseY},
+            {"str",          mInputs.strafe},
+            {"for",        mInputs.forwards},
+            {"jmp",               mWishJump},
+            {"ajp",               mAutoJump},
+            { "ts", OS.GetSystemTimeMsecs()}
         };
-        RpcUnreliable("SendPlayerInput", send);
+        RpcUnreliableId(1, "SendPlayerInput", send);
     }
 
     private void SendPlayerState() {
-        Snap send = new Snap() {
+        mStateCollection = new Snap() {
             {  "gt",       GlobalTransform},
             { "hgt", mHead.GlobalTransform},
             { "bgt", mBody.GlobalTransform},
@@ -741,6 +749,6 @@ Vertical velocity: {mVerticalVelocity}";
             {"vvel",     mVerticalVelocity},
             {"wdir",              mWishDir}
         };
-        RpcUnreliableId(0, "UpdatePlayer", send);
+        RpcUnreliable("UpdatePlayer", mStateCollection);
     }
 }
