@@ -225,7 +225,7 @@ Vertical velocity: {mVerticalVelocity}";
     }
 
     public override void _UnhandledInput(InputEvent @event) {
-        base._Input(@event);
+        base._UnhandledInput(@event);
 
         if (!mIsRealPlayer) {
             return;
@@ -236,6 +236,7 @@ Vertical velocity: {mVerticalVelocity}";
             float dy = -mouseEvent.Relative.y * mMouseSensitivity;
             mInputs = mInputs.DeltaMouse(dx, dy);
         }
+        MoveHead(mInputs.mouseX, mInputs.mouseY);
     }
 
     public override void _Process(float delta) {
@@ -293,7 +294,9 @@ Vertical velocity: {mVerticalVelocity}";
             mInputs = new Tst.Input(mInputs.mouseX, mInputs.mouseY, strafeInput, forwardInput);
             SendInputPacket();
         }
-        MoveHead(mInputs.mouseX, mInputs.mouseY);
+        if (GetTree().IsNetworkServer()) {
+            MoveHead(mInputs.mouseX, mInputs.mouseY);
+        }
         mInputs = mInputs.ResetMouse();
 
         mWishDir = new Vector3(strafeInput, 0F, forwardInput)
@@ -558,6 +561,9 @@ Vertical velocity: {mVerticalVelocity}";
 
     // Set wish_jump depending on player input.
     private void QueueJump() {
+        if (!mIsRealPlayer) {
+            return;
+        }
         // If auto_jump is true, the player keeps jumping as long as the key is kept down.
         if (mAutoJump) {
             mWishJump = Input.IsActionPressed("jump");

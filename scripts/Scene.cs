@@ -41,27 +41,73 @@ public class Scene : Spatial, Tst.Debuggable {
     private List<Snap> mWorldCache = null;
 
     /// <summary>
-    /// Amount of time to interpolate between frames.
+    /// Amount of time to interpolate between frames. Only used by the client.
     /// </summary>
     private ulong mInterpolationConstant = 100;
 
+    /// <summary>
+    /// Timer used to determine when to send the world state to the client. Only used by the server.
+    /// </summary>
+    private float mPacketTimer = 0F;
+
+    /// <summary>
+    /// Interval of time to send a packet.
+    /// </summary>
+    private float _mPacketSendInterval = 1F / 20F;
+
+    /// <summary>
+    /// The rate that the server is sending data to the client. Only used on client.
+    /// </summary>
+    private int mPacketCounter = 0;
+
+    /// <summary>
+    /// The rate that the server is sending data to the client. Only used on client.
+    /// </summary>
+    private int mPacketUpdateRate = 0;
+
+    /// <summary>
+    /// Timer used to update debugging statistics.
+    /// </summary>
+    private ulong mStatUpadteTimer = 0;
+
+    /// <summary>
+    /// The last time (ms) that _PhysicsProcess was run. Used for calculating debug stats.
+    /// </summary>
+    private ulong mLastPhysTime = 0;
+
+    public float mPacketSendInterval {
+        get => _mPacketSendInterval;
+        set {
+            _mPacketSendInterval = Mathf.Clamp(value, 1F / 128F, float.MaxValue);
+            // Reset the timer so something crazy doesn't happen.
+            mPacketTimer = 0F;
+            if (_mPacketSendInterval != value) {
+                GD.PrintErr($"Attempt to set timer inverval to invalid value ({value}). " +
+                            $"Set to {_mPacketSendInterval} instead");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Id for the debug overlay.
+    /// </summary>
     private ulong mDebugId = 0;
 
+    /// <summary>
+    /// Name of the debug overlay, used so that children can add their information to the overlay.
+    /// </summary>
     public const string DEBUG_OVERLAY_NAME = "_tst_debug_overlay";
 
     public void GetDebug(Control c) {
         if (c is Godot.Label label) {
-            label.Text =
-                $"FPS: {Godot.Engine.GetFramesPerSecond()}\nMemory: {GetStaticMemoryUsageMB():0.000}MB";
+            label.Text = $@"FPS: {Godot.Engine.GetFramesPerSecond()}
+Memory: {GetStaticMemoryUsageMB():0.000}MB
+Snapshots/second: {mPacketUpdateRate}";
         }
     }
 
     public ulong GetDebugId() => mDebugId;
     public void SetDebugId(ulong id) => mDebugId = id;
-
-    public float GetFPS() {
-        return Godot.Engine.GetFramesPerSecond();
-    }
 
     public float GetStaticMemoryUsageMB() {
         return ((float)Godot.OS.GetStaticMemoryUsage()) / 1_000_000F;
@@ -121,7 +167,9 @@ public class Scene : Spatial, Tst.Debuggable {
             ulong futureTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
             float interpFactor =
                 (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
-            interpFactor = Mathf.Clamp(interpFactor, 0.01F, 1F);
+            const float MIN_FACTOR = 0.01F;
+            interpFactor = Util.IsFinite(interpFactor) ? interpFactor : MIN_FACTOR;
+            interpFactor = Mathf.Clamp(interpFactor, MIN_FACTOR, 1F);
 
             Snap oldPlayers = (Snap)mWorldCache[0]["plys"];
             Snap newPlayers = (Snap)mWorldCache[1]["plys"];
@@ -183,19 +231,20 @@ public class Scene : Spatial, Tst.Debuggable {
                     pl.UpdatePlayer(playerDat);
                     playerDat["gt"] = futurePosition;
                 } catch (System.Collections.Generic.KeyNotFoundException) {
-                    GD.PrintErr($"Player with id {player} was not found.");
+                    GD.PrintErr($"Player snapshot invalid (no transform). Not interpolating.");
                 } catch (InvalidCastException e) {
-                    GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+                    GD.PrintErr(
+                        $"Player snapshot invalid (global transform is not a valid type): {e}. Not interpolating.");
                 } catch (Exception e) {
-                    GD.PrintErr($"Error in receiving world state: {e}");
+                    GD.PrintErr($"Error in reading trasnforms: {e}");
                 }
             }
         }
     }
 
     private void PhysicsProcessServer(float delta) {
-        if (mPlayerStates.Count > 0) {
-            // mWorldState.Remove("ts");
+        if (mPlayerStates.Count > 0 && (mPacketTimer += delta) > mPacketSendInterval) {
+            mPacketTimer -= mPacketSendInterval;
             mWorldState["ts"] = OS.GetSystemTimeMsecs().ToString();
             Snap ps = mPlayerStates.Duplicate(true);
             mWorldState["plys"] = ps;
@@ -211,6 +260,18 @@ public class Scene : Spatial, Tst.Debuggable {
 
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
+
+        ulong totalTicks = OS.GetTicksMsec();
+
+        mStatUpadteTimer += (totalTicks - mLastPhysTime);
+
+        mLastPhysTime = totalTicks;
+
+        if (mStatUpadteTimer > 1000) {
+            mStatUpadteTimer = 0;
+            mPacketUpdateRate = mPacketCounter;
+            mPacketCounter = 0;
+        }
 
         if (GetTree().IsNetworkServer()) {
             PhysicsProcessServer(delta);
@@ -344,6 +405,7 @@ public class Scene : Spatial, Tst.Debuggable {
     [Puppet]
     public void RecvWorldState(Snap input) {
         // Do players first.
+        mPacketCounter++;
         ulong ts = Util.TryGetVOr(input, "ts", ulong.MaxValue);
         if (ts > mWorldTs) {
             mWorldCache.Add(input);
