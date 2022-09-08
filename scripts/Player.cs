@@ -654,13 +654,13 @@ Vertical velocity: {mVerticalVelocity}";
 
     private void SendInputPacket() {
         Snap send = new Snap() {
-            {"mDx",          mInputs.mouseX},
-            {"mDy",          mInputs.mouseY},
-            {"str",          mInputs.strafe},
-            {"for",        mInputs.forwards},
-            {"jmp",               mWishJump},
-            {"ajp",               mAutoJump},
-            { "ts", OS.GetSystemTimeMsecs()}
+            {"mDx",                     mInputs.mouseX},
+            {"mDy",                     mInputs.mouseY},
+            {"str",                     mInputs.strafe},
+            {"for",                   mInputs.forwards},
+            {"jmp",                          mWishJump},
+            {"ajp",                          mAutoJump},
+            { "ts", OS.GetSystemTimeMsecs().ToString()}
         };
         mSceneRef.SendPlayerInput(send);
     }

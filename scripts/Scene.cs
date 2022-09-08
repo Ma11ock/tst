@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 
 using Snap = Godot.Collections.Dictionary;
 
@@ -24,9 +25,25 @@ public class Scene : Spatial, Tst.Debuggable {
     /// </summary>
     private Snap mPlayerStates = null;
 
+    /// <summary>
+    /// Reference to preloaded assets.
+    /// </summary>
     private Godot.Node mPreloads = null;
 
+    /// <summary>
+    /// Global debug console.
+    /// </summary>
     private Console mDebugConsole = null;
+
+    /// <summary>
+    /// World State buffer (snapshots). Used only by the client.
+    /// </summary>
+    private List<Snap> mWorldCache = null;
+
+    /// <summary>
+    /// Amount of time to interpolate between frames.
+    /// </summary>
+    private ulong mInterpolationConstant = 100;
 
     private ulong mDebugId = 0;
 
@@ -81,6 +98,9 @@ public class Scene : Spatial, Tst.Debuggable {
         if (GetTree().IsNetworkServer()) {
             mPlayerStates = new Snap();
             mWorldState = new Snap();
+        } else {
+            // Client.
+            mWorldCache = new List<Snap>();
         }
     }
 
@@ -88,20 +108,114 @@ public class Scene : Spatial, Tst.Debuggable {
         base._Process(delta);
     }
 
-    public override void _PhysicsProcess(float delta) {
-        base._PhysicsProcess(delta);
+    private void PhysicsProcessClient(float delta) {
+        ulong renderTime = OS.GetSystemTimeMsecs() - mInterpolationConstant;
+        if (mWorldCache.Count > 1) {
+            while (mWorldCache.Count > 2 &&
+                   renderTime > Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue)) {
+                // The world state is too old to be in the future, remove it.
+                // This pushes mWorldCache[1] to the front, making it the old state.
+                mWorldCache.RemoveAt(0);
+            }
+            ulong mostRecentTs = Util.TryGetVOr(mWorldCache[0], "ts", ulong.MaxValue);
+            ulong futureTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
+            float interpFactor =
+                (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
+            interpFactor = Mathf.Clamp(interpFactor, 0.01F, 1F);
 
-        if (GetTree().IsNetworkServer() && mPlayerStates.Count > 0) {
-            mWorldState["ts"] = OS.GetSystemTimeMsecs();
+            Snap oldPlayers = (Snap)mWorldCache[0]["plys"];
+            Snap newPlayers = (Snap)mWorldCache[1]["plys"];
+
+            // Lerp players.
+            foreach(var key in newPlayers.Keys) {
+                string player = "";
+                if (key is string p) {
+                    player = p;
+                } else if (key is int pi) {
+                    player = pi.ToString();
+                } else {
+                    GD.PrintErr(
+                        $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
+                }
+
+                if (!oldPlayers.Contains(player)) {
+                    // Do not lerp the player if they don't exist in both snapshots.
+                    continue;
+                }
+
+                Snap oldPlayerDat = null;
+                Snap playerDat = null;
+                try {
+                    playerDat = (Snap)newPlayers[player];
+                    oldPlayerDat = (Snap)oldPlayers[player];
+                } catch (System.Collections.Generic.KeyNotFoundException) {
+                    GD.PrintErr($"Player with id {player} was not found.");
+                } catch (InvalidCastException e) {
+                    GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+                } catch (Exception e) {
+                    GD.PrintErr($"Error in receiving world state: {e}");
+                }
+                if (playerDat == null) {
+                    // Skip if error.
+                    continue;
+                }
+
+                if (!HasNode(player)) {
+                    // TODO dont error, spawn a player.
+                    GD.PrintErr($"Player {player} does not exist in scene tree.");
+                    continue;
+                }
+
+                Player pl = GetNodeOrNull<Player>(player);
+
+                if (pl == null) {
+                    GD.PrintErr($"Object at {player} is not a Player!");
+                    continue;
+                }
+
+                // Calculate the position by lerping.
+                try {
+                    Transform oldPosition = (Transform)oldPlayerDat["gt"];
+                    Transform futurePosition = (Transform)playerDat["gt"];
+                    Transform newTransform =
+                        oldPosition.InterpolateWith(futurePosition, interpFactor);
+                    playerDat["gt"] = newTransform;
+                    pl.UpdatePlayer(playerDat);
+                    playerDat["gt"] = futurePosition;
+                } catch (System.Collections.Generic.KeyNotFoundException) {
+                    GD.PrintErr($"Player with id {player} was not found.");
+                } catch (InvalidCastException e) {
+                    GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+                } catch (Exception e) {
+                    GD.PrintErr($"Error in receiving world state: {e}");
+                }
+            }
+        }
+    }
+
+    private void PhysicsProcessServer(float delta) {
+        if (mPlayerStates.Count > 0) {
+            // mWorldState.Remove("ts");
+            mWorldState["ts"] = OS.GetSystemTimeMsecs().ToString();
             Snap ps = mPlayerStates.Duplicate(true);
             mWorldState["plys"] = ps;
             // Delete unnecessary fields when sending over the network.
             foreach(var player in mPlayerStates.Keys) {
-                Godot.Collections.Dictionary playerDat = (Godot.Collections.Dictionary)(ps[player]);
+                Snap playerDat = (Snap)ps[player];
                 playerDat.Remove("ts");
             }
 
             SendWorldState();
+        }
+    }
+
+    public override void _PhysicsProcess(float delta) {
+        base._PhysicsProcess(delta);
+
+        if (GetTree().IsNetworkServer()) {
+            PhysicsProcessServer(delta);
+        } else {
+            PhysicsProcessClient(delta);
         }
     }
 
@@ -216,8 +330,8 @@ public class Scene : Spatial, Tst.Debuggable {
         if (!HasNode(playerId)) {
             return;
         }
-        if (Util.TryGetVOr<ulong>(playerState, "ts", ulong.MaxValue) <
-            Util.TryGetVOr<ulong>(mWorldState, "ts", ulong.MaxValue)) {
+        if (Util.TryGetVOr(playerState, "ts", ulong.MaxValue) <
+            Util.TryGetVOr(mWorldState, "ts", ulong.MaxValue)) {
             return;
         }
 
@@ -230,56 +344,10 @@ public class Scene : Spatial, Tst.Debuggable {
     [Puppet]
     public void RecvWorldState(Snap input) {
         // Do players first.
-        ulong ts = Util.TryGetVOr<ulong>(input, "ts", ulong.MaxValue);
-        if (ts < mWorldTs) {
-            // The world state we got is too old, skip.
-            return;
+        ulong ts = Util.TryGetVOr(input, "ts", ulong.MaxValue);
+        if (ts > mWorldTs) {
+            mWorldCache.Add(input);
+            mWorldTs = ts;
         }
-
-        mWorldTs = ts;
-        Snap players = (Snap)input["plys"];
-        foreach(var key in players.Keys) {
-            string player = "";
-            if (key is string p) {
-                player = p;
-            } else if (key is int pi) {
-                player = pi.ToString();
-            } else {
-                GD.PrintErr(
-                    $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
-            }
-
-            Snap playerDat = null;
-            try {
-                playerDat = (Snap)players[player];
-            } catch (System.Collections.Generic.KeyNotFoundException) {
-                GD.PrintErr($"{player} was not found.");
-            } catch (InvalidCastException e) {
-                GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
-            } catch (Exception e) {
-                GD.PrintErr($"Error in receiving world state: e");
-            }
-            if (playerDat == null) {
-                // Skip if error.
-                continue;
-            }
-
-            if (!HasNode(player)) {
-                // TODO dont error, spawn a player.
-                GD.PrintErr($"Player {player} does not exist in scene tree.");
-                continue;
-            }
-
-            Player pl = GetNodeOrNull<Player>(player);
-
-            if (pl == null) {
-                GD.PrintErr($"Object at {player} is not a Player!");
-                continue;
-            }
-
-            pl.UpdatePlayer(playerDat);
-        }
-
-        // Everything else.
     }
 }

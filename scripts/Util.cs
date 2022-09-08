@@ -2,6 +2,7 @@ using Godot;
 using System;
 
 using Snap = Godot.Collections.Dictionary;
+
 class Util {
     public static Vector3 Lerp(Vector3 v1, Vector3 v2,
                                float weight) => new Vector3(Mathf.Lerp(v1.x, v2.x, weight),
@@ -36,6 +37,20 @@ class Util {
 
     public static bool IsFinite(float u) => !(float.IsInfinity(u) || float.IsNaN(u));
 
+    /// <summary>
+    /// Try to get a ulong from a map.
+    /// NOTE: Only necessary because of a bug in Godot (maps cannot store ulongs, so they have to be
+    /// encoded as strings).
+    /// </summary>
+    public static ulong TryGetVOr(Snap dat, string key, ulong v) {
+        string r = TryGetR<string>(dat, key);
+        try {
+            return UInt64.Parse(r);
+        } catch (Exception) {
+            return v;
+        }
+    }
+
     public static T TryGetVOr<T>(Snap dat, string key, T or)
         where T : unmanaged {
         T? r = TryGetV<T>(dat, key);
@@ -45,8 +60,10 @@ class Util {
     public static T? TryGetV<T>(Snap dat, string key)
         where T : unmanaged {
         object obj = null;
-        if(dat.Contains(key)) {
+
+        try {
             obj = dat[key];
+        } catch (System.Collections.Generic.KeyNotFoundException) {
         }
 
         if (obj == null || !(obj is T)) {
@@ -60,8 +77,10 @@ class Util {
 
         where T : class {
         object obj = null;
-        if(dat.Contains(key)) {
+
+        try {
             obj = dat[key];
+        } catch (System.Collections.Generic.KeyNotFoundException) {
         }
 
         if (obj == null || !(obj is T)) {
@@ -70,5 +89,4 @@ class Util {
 
         return (T)obj;
     }
-
 }
