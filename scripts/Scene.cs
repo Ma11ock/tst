@@ -43,7 +43,7 @@ public class Scene : Spatial, Tst.Debuggable {
     /// <summary>
     /// Amount of time to interpolate between frames. Only used by the client.
     /// </summary>
-    private ulong mInterpolationConstant = 100;
+    private ulong mInterpolationConstant = 50;
 
     /// <summary>
     /// Timer used to determine when to send the world state to the client. Only used by the server.
@@ -165,8 +165,10 @@ Snapshots/second: {mPacketUpdateRate}";
             }
             ulong mostRecentTs = Util.TryGetVOr(mWorldCache[0], "ts", ulong.MaxValue);
             ulong futureTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
+            // Determine how much time has passed since the old state and the future state.
             float interpFactor =
                 (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
+            // Ensure the factor is valid and wont mess up Lerp().
             const float MIN_FACTOR = 0.01F;
             interpFactor = Util.IsFinite(interpFactor) ? interpFactor : MIN_FACTOR;
             interpFactor = Mathf.Clamp(interpFactor, MIN_FACTOR, 1F);
@@ -184,6 +186,7 @@ Snapshots/second: {mPacketUpdateRate}";
                 } else {
                     GD.PrintErr(
                         $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
+                    continue;
                 }
 
                 if (!oldPlayers.Contains(player)) {
@@ -203,7 +206,7 @@ Snapshots/second: {mPacketUpdateRate}";
                 } catch (Exception e) {
                     GD.PrintErr($"Error in receiving world state: {e}");
                 }
-                if (playerDat == null) {
+                if (playerDat == null || oldPlayerDat == null) {
                     // Skip if error.
                     continue;
                 }
@@ -228,8 +231,21 @@ Snapshots/second: {mPacketUpdateRate}";
                     Transform newTransform =
                         oldPosition.InterpolateWith(futurePosition, interpFactor);
                     playerDat["gt"] = newTransform;
+                    Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
+                    Transform futureHeadPosition = (Transform)playerDat["hgt"];
+                    Transform newHeadTransform =
+                        oldHeadPosition.InterpolateWith(futureHeadPosition, interpFactor);
+                    Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
+                    Transform futureBodyPosition = (Transform)playerDat["bgt"];
+                    Transform newBodyTransform =
+                        oldBodyPosition.InterpolateWith(futureBodyPosition, interpFactor);
+                    playerDat["gt"] = newTransform;
+                    playerDat["hgt"] = newHeadTransform;
+                    playerDat["bgt"] = newBodyTransform;
                     pl.UpdatePlayer(playerDat);
                     playerDat["gt"] = futurePosition;
+                    playerDat["hgt"] = futureHeadPosition;
+                    playerDat["bgt"] = futureBodyPosition;
                 } catch (System.Collections.Generic.KeyNotFoundException) {
                     GD.PrintErr($"Player snapshot invalid (no transform). Not interpolating.");
                 } catch (InvalidCastException e) {
@@ -389,6 +405,7 @@ Snapshots/second: {mPacketUpdateRate}";
     public void RecvPlayerInput(Snap playerState) {
         string playerId = GetTree().GetRpcSenderId().ToString();
         if (!HasNode(playerId)) {
+            GD.PrintErr($"Recv'd invalid player input: {GetTree().GetRpcSenderId()}.");
             return;
         }
         if (Util.TryGetVOr(playerState, "ts", ulong.MaxValue) <

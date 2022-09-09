@@ -1,4 +1,5 @@
 using Godot;
+using System.Collections.Generic;
 
 // Notes on Quake's movement code: It's coordinate system is different to that
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
@@ -11,28 +12,20 @@ namespace Tst {
 /// <summary>
 /// </summary>
 public struct Input {
-    public float mouseX;
-    public float mouseY;
-    public float strafe;
-    public float forwards;
+    public float strafe { get; private set; }
+    public float forwards { get; private set; }
 
-    public Input(float mouseX, float mouseY, float strafe, float forwards) {
-        this.mouseX = mouseX;
-        this.mouseY = mouseY;
+    public Input(float strafe, float forwards) {
         this.strafe = strafe;
         this.forwards = forwards;
     }
 
-    public Input DeltaMouse(float dx, float dy) {
-        return new Input(mouseX + dx, mouseY + dy, strafe, forwards);
-    }
-
     public Input ResetMouse() {
-        return new Input(0F, 0F, strafe, forwards);
+        return new Input(strafe, forwards);
     }
 
     public override string ToString() {
-        return $"mouseX = {mouseX}, mouseY = {mouseY}, strafe = {strafe}, forwards = {forwards}";
+        return $"strafe = {strafe}, forwards = {forwards}";
     }
 }
 }
@@ -64,9 +57,14 @@ public class Player : KinematicBody, Tst.Debuggable {
     private Godot.Tween mMovementTween = null;
 
     /// <summary>
+    /// Queue of player inputs.
+    /// </summary>
+    private Queue<Snap> mPlayerInputQueue = new Queue<Snap>();
+
+    /// <summary>
     /// Input struct for the current frame.
     /// </summary>
-    private Tst.Input mInputs = new Tst.Input();
+    private Tst.Input mInputs = new Tst.Input(0F, 0F);
     /// <summary>
     /// True if this player instance is client's player character.
     /// </summary>
@@ -115,7 +113,7 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// Client's mouse sensitivity.
     /// </summary>
     [Export]
-    private float mMouseSensitivity = 0.05F;
+    private float mMouseSensitivity = 0.09F;
     /// <summary>
     /// Max speed of the player on the ground.
     /// </summary>
@@ -155,8 +153,17 @@ public class Player : KinematicBody, Tst.Debuggable {
     private Vector3 mWishDir = Vector3.Zero;
     private Vector3 mGravityVec = Vector3.Zero;
     private float mVerticalVelocity = 0F;  // Vertical component of velocity.
-    private bool mWishJump = false;  // If true, player has queued a jump : the jump key can be
-                                     // held down before hitting the ground to jump.
+
+    /// <summary>
+    /// If true, player has queued a jump : the jump key can be held down before hitting the ground
+    /// to jump.
+    /// </summary>
+    private bool mWishJump = false;
+
+    /// <summary>
+    /// If true the player is currently jumping.
+    /// </summary>
+    private bool mIsJump = false;
     private bool mAutoJump = false;  // If true, player has queued a jump : the jump key can be
                                      // held down before hitting the ground to jump.
 
@@ -187,7 +194,8 @@ public class Player : KinematicBody, Tst.Debuggable {
         if (c is Godot.Label label) {
             label.Text = $@"Velocity: {mVelocity}
 Wishdir: {mWishDir}
-Wish jump: {mWishJump}
+GlobalT: {GlobalTransform}
+Is jump: {mIsJump}
 Is on floor: {IsOnFloor()}
 Vertical velocity: {mVerticalVelocity}";
         }
@@ -234,9 +242,10 @@ Vertical velocity: {mVerticalVelocity}";
             Input.MouseMode == Input.MouseModeEnum.Captured) {
             float dx = -mouseEvent.Relative.x * mMouseSensitivity;
             float dy = -mouseEvent.Relative.y * mMouseSensitivity;
-            mInputs = mInputs.DeltaMouse(dx, dy);
+            mDy += dy;
+            mDx += dx;
+            MoveHead(dx, dy);
         }
-        MoveHead(mInputs.mouseX, mInputs.mouseY);
     }
 
     public override void _Process(float delta) {
@@ -271,31 +280,25 @@ Vertical velocity: {mVerticalVelocity}";
             Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
-    /// Needed for debugging window.
-    public bool PlayerIsOnFloor() {
-        return IsOnFloor();
-    }
-
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
 
         mIsStep = false;
-        // int inputNum = 1;  // For sending inputs over the network.
 
         float forwardInput = mInputs.forwards;
         float strafeInput = mInputs.strafe;
-        // TODO better way to ignore captured input.
         if (mIsRealPlayer && !Global.InputCaptured) {
             forwardInput =
                 Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
             strafeInput =
                 Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
 
-            mInputs = new Tst.Input(mInputs.mouseX, mInputs.mouseY, strafeInput, forwardInput);
+            mInputs = new Tst.Input(strafeInput, forwardInput);
+            mWishJump = QueueJump();
             SendInputPacket();
-        }
-        if (GetTree().IsNetworkServer()) {
-            MoveHead(mInputs.mouseX, mInputs.mouseY);
+        } else if (GetTree().IsNetworkServer()) {
+            // Get inputs.
+            NextInput();
         }
         mInputs = mInputs.ResetMouse();
 
@@ -303,10 +306,9 @@ Vertical velocity: {mVerticalVelocity}";
                        .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
                        .Normalized();
 
-        // Move.
         if (IsOnFloor()) {
-            if (mWishJump) {
-                // # If we're on the ground but wish_jump is still true, this means we've just
+            if (mIsJump) {
+                // If we're on the ground but mIsJump is still true, this means we've just
                 // landed.
                 mSnap = Vector3.Zero;  // Set snapping to zero so we can get off the ground.
                 mVerticalVelocity = mJumpImpulse;  // Jump.
@@ -314,7 +316,7 @@ Vertical velocity: {mVerticalVelocity}";
                 MoveAir(mVelocity, delta);  // Mimic Quake's way of treating first frame after
                 // landing as still in the air.
 
-                mWishJump = false;  // We have jumped, the player needs to press jump key again.
+                mIsJump = false;  // We have jumped, the player needs to press jump key again.
                 mGravityVec += Vector3.Down * gravity * delta;
             } else {
                 // Player is on the ground. Move normally, apply friction.
@@ -335,8 +337,7 @@ Vertical velocity: {mVerticalVelocity}";
             mVerticalVelocity = 0F;
         }
 
-        QueueJump();
-
+        // Stair stepping.
         if (mGravityVec.y >= 0) {
             for (int i = 0; i < STEP_CHECK_COUNT; i++) {
                 PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
@@ -515,6 +516,11 @@ Vertical velocity: {mVerticalVelocity}";
         } else if (GetTree().IsNetworkServer()) {
             SendPlayerState();
         }
+
+        if (mWishJump) {
+            mIsJump = true;
+            mWishJump = false;
+        }
     }
 
     // This is were we calculate the speed to add to current velocity
@@ -527,7 +533,7 @@ Vertical velocity: {mVerticalVelocity}";
 
         // Next, we calculate the speed to be added for the next frame.
         // If our current speed is low enough, we will add the max acceleration.
-        // If we're going too fast, our acceleration will be reduced (until it evenutually hits 0,
+        // If we're going too fast, our acceleration will be reduced (until it eventually hits 0,
         // where we don't add any more speed).
         float addSpeed = Mathf.Clamp(maxSpeed - currentSpeed, 0F, acceleration * delta);
 
@@ -560,19 +566,20 @@ Vertical velocity: {mVerticalVelocity}";
     }
 
     // Set wish_jump depending on player input.
-    private void QueueJump() {
+    private bool QueueJump() {
         if (!mIsRealPlayer) {
-            return;
+            return mWishJump;
         }
         // If auto_jump is true, the player keeps jumping as long as the key is kept down.
         if (mAutoJump) {
             mWishJump = Input.IsActionPressed("jump");
-            return;
+            return false;
         }
 
         if (Input.IsActionJustPressed("jump")) {
-            mWishJump = !mWishJump;
+            return true;
         }
+        return false;
     }
 
     // Apply friction, then accelerate.
@@ -602,46 +609,62 @@ Vertical velocity: {mVerticalVelocity}";
         mVelocity = nextVelocity;
     }
 
+    private float mDy = 0F;
+    private float mDx = 0F;
+
     private void MoveHead(float dx, float dy) {
         mBody.RotateY(Mathf.Deg2Rad(dx));
         mHead.RotateX(Mathf.Deg2Rad(dy));
         float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
         mHead.Rotation = Util.ChangeX(mHead.Rotation, newRotX);
+
+        mBody.Transform = mBody.Transform.Orthonormalized();
+        mHead.Transform = mHead.Transform.Orthonormalized();
+        Transform = Transform.Orthonormalized();
     }
 
-    public void PlayerInput(Snap dat) {
-        float mouseDx = Util.TryGetVOr<float>(dat, "mDx", 0F);
-        float mouseDy = Util.TryGetVOr<float>(dat, "mDy", 0F);
+    private void NextInput() {
+        if (mPlayerInputQueue.Count < 1 || !GetTree().IsNetworkServer()) {
+            return;
+        }
+        Snap dat = mPlayerInputQueue.Dequeue();
+        float dx = Util.TryGetVOr<float>(dat, "dx", 0F);
+        float dy = Util.TryGetVOr<float>(dat, "dy", 0F);
         float strafe = Util.TryGetVOr<float>(dat, "str", 0F);
         float forward = Util.TryGetVOr<float>(dat, "for", 0F);
         bool jump = Util.TryGetVOr<bool>(dat, "jmp", false);
         bool autoJump = Util.TryGetVOr<bool>(dat, "ajp", false);
 
         // Ensure all floats are valid values. Reject the input if so.
-        if (!Util.IsFinite(mouseDx)) {
-            GD.Print($"Mouse X value is not finite");
-            return;
-        } else if (!Util.IsFinite(mouseDy)) {
-            GD.Print($"Mouse Y value is not finite");
+        if (!Util.IsFinite(0)) {
+            GD.PrintErr($"Head rotation is not finite");
             return;
         } else if (!Util.IsFinite(strafe)) {
-            GD.Print($"Strafe value is not finite");
+            GD.PrintErr($"Strafe value is not finite");
             return;
         } else if (!Util.IsFinite(forward)) {
-            GD.Print($"Forward movement value is not finite");
+            GD.PrintErr($"Forward movement value is not finite");
             return;
         }
 
-        mInputs = new Tst.Input(mouseDx, mouseDy, strafe, forward);
+        // Move.
+        mInputs = new Tst.Input(strafe, forward);
         mWishJump = jump;
         mAutoJump = autoJump;
+        MoveHead(dx, dy);
+    }
+
+    public void PlayerInput(Snap dat) {
+        if (mPlayerInputQueue.Count > 32) {
+            GD.PrintErr($"Err: {mPlayerInputQueue.Count} is at max!");
+        }
+        mPlayerInputQueue.Enqueue(dat);
     }
 
     public void UpdatePlayer(Snap recv) {
         // TODO instead of current values, should be the cache from the last recv'd snapshot.
         GlobalTransform = Util.TryGetVOr<Transform>(recv, "gt", GlobalTransform);
         mVelocity = Util.TryGetVOr<Vector3>(recv, "vel", mVelocity);
-        mWishJump = Util.TryGetVOr<bool>(recv, "jmp", false);
         mGravityVec = Util.TryGetVOr<Vector3>(recv, "grav", mGravityVec);
         mWishDir = Util.TryGetVOr<Vector3>(recv, "wdir", mWishDir);
         mVerticalVelocity = Util.TryGetVOr<float>(recv, "vvel", mVerticalVelocity);
@@ -660,14 +683,18 @@ Vertical velocity: {mVerticalVelocity}";
 
     private void SendInputPacket() {
         Snap send = new Snap() {
-            {"mDx",                     mInputs.mouseX},
-            {"mDy",                     mInputs.mouseY},
+            { "dx",                                mDx},
+            { "dy",                                mDy},
+            {"hlt",                    mHead.Transform},
+            {"blt",                    mBody.Transform},
             {"str",                     mInputs.strafe},
             {"for",                   mInputs.forwards},
             {"jmp",                          mWishJump},
             {"ajp",                          mAutoJump},
             { "ts", OS.GetSystemTimeMsecs().ToString()}
         };
+        mDx = 0;
+        mDy = 0;
         mSceneRef.SendPlayerInput(send);
     }
 
@@ -677,7 +704,6 @@ Vertical velocity: {mVerticalVelocity}";
             { "hgt", mHead.GlobalTransform},
             { "bgt", mBody.GlobalTransform},
             { "vel",             mVelocity},
-            { "jmp",             mWishJump},
             { "ajp",             mAutoJump},
             {"grav",           mGravityVec},
             {"snap",                 mSnap},

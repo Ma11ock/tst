@@ -37,6 +37,8 @@ class Util {
 
     public static bool IsFinite(float u) => !(float.IsInfinity(u) || float.IsNaN(u));
 
+    public static bool IsFinite(Vector3 v) => IsFinite(v.x) && IsFinite(v.y) && IsFinite(v.z);
+
     /// <summary>
     /// Try to get a ulong from a map.
     /// NOTE: Only necessary because of a bug in Godot (maps cannot store ulongs, so they have to be
@@ -59,34 +61,25 @@ class Util {
 
     public static T? TryGetV<T>(Snap dat, string key)
         where T : unmanaged {
-        object obj = null;
-
         try {
-            obj = dat[key];
+            return dat[key] as T?;
         } catch (System.Collections.Generic.KeyNotFoundException) {
-        }
-
-        if (obj == null || !(obj is T)) {
             return null;
         }
+    }
 
-        return (T)obj;
+    public static T TryGetROr<T>(Snap dat, string key, T or) where T : class {
+        T o = TryGetR<T>(dat, key);
+        return o == null ? or : o;
     }
 
     public static T TryGetR<T>(Snap dat, string key)
 
         where T : class {
-        object obj = null;
-
         try {
-            obj = dat[key];
+            return dat[key] as T;
         } catch (System.Collections.Generic.KeyNotFoundException) {
-        }
-
-        if (obj == null || !(obj is T)) {
             return null;
         }
-
-        return (T)obj;
     }
 }
