@@ -14,15 +14,44 @@ namespace Tst {
 public struct Input {
     public float strafe { get; private set; }
     public float forwards { get; private set; }
+    public float dx { get; private set; }
+    public float dy { get; private set; }
+    /// <summary>
+    /// If true, player has queued a jump : the jump key can be held down before hitting the ground
+    /// to jump.
+    /// </summary>
+    public bool jump { get; private set; }
 
     public Input(float strafe, float forwards) {
         this.strafe = strafe;
         this.forwards = forwards;
+        this.dx = 0F;
+        this.dy = 0F;
+        this.jump = false;
     }
 
-    public override string ToString() {
-        return $"strafe = {strafe}, forwards = {forwards}";
+    public Input(float strafe, float forwards, float dx, float dy, bool jump) {
+        this.strafe = strafe;
+        this.forwards = forwards;
+        this.dx = dx;
+        this.dy = dy;
+        this.jump = jump;
     }
+
+    public override string ToString() => $"strafe = {strafe}, forwards = {forwards}";
+
+    public Input SetMouse(float dx, float dy) => new Input(this.strafe, this.forwards, dx, dy,
+                                                           this.jump);
+    public Input DeltaMouse(float dx, float dy) => new Input(this.strafe, this.forwards,
+                                                             this.dx + dx, this.dy + dy, this.jump);
+
+    public Input ResetMouse() => SetMouse(0F, 0F);
+
+    public Input SetDirs(float strafe, float forwards) => new Input(strafe, forwards, this.dx,
+                                                                    this.dy, this.jump);
+
+    public Input SetJump(bool wishJump = true) => new Input(this.strafe, this.forwards, this.dx,
+                                                            this.dy, wishJump);
 }
 }
 
@@ -53,14 +82,19 @@ public class Player : KinematicBody, Tst.Debuggable {
     private Godot.Tween mMovementTween = null;
 
     /// <summary>
-    /// Queue of player inputs.
+    /// Queue of player inputs. Used only by the server.
     /// </summary>
-    private Queue<Snap> mPlayerInputQueue = new Queue<Snap>();
+    private Queue<Snap> mPlayerInputQueue = null;
+
+    /// <summary>
+    /// List of player inputs. Used only by the client for rollback and reconciliation.
+    /// </summary>
+    private List<Tst.Input> mPlayerInputList = null;
 
     /// <summary>
     /// Input struct for the current frame.
     /// </summary>
-    private Tst.Input mInputs = new Tst.Input(0F, 0F);
+    private Tst.Input mInputs = new Tst.Input(0F, 0F, 0F, 0F, false);
     /// <summary>
     /// True if this player instance is client's player character.
     /// </summary>
@@ -140,21 +174,20 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// </summary>
     private float mTerminalVelocity = gravity * -5F;
     /// <summary>
-    /// Snap vector, used for stairs and some collision physics.
+    /// Snap vector, used for stairs and some collision physics. Needed for MoveAndSlideWithSnap(),
+    /// which enables going down slopes without falling.
     /// </summary>
-    private Vector3 mSnap = Vector3.Zero;  // Needed for MoveAndSlideWithSnap(), which enables
-                                           // going down slopes without falling.
+    private Vector3 mSnap = Vector3.Zero;
+
+    /// <summary>
+    /// The n'th tick the game server is on. Used only by the server and the client's player.
+    /// </summary>
+    public ulong mCurTick = 0;
 
     private Vector3 mVelocity = Vector3.Zero;
     private Vector3 mWishDir = Vector3.Zero;
     private Vector3 mGravityVec = Vector3.Zero;
     private float mVerticalVelocity = 0F;  // Vertical component of velocity.
-
-    /// <summary>
-    /// If true, player has queued a jump : the jump key can be held down before hitting the ground
-    /// to jump.
-    /// </summary>
-    private bool mWishJump = false;
 
     /// <summary>
     /// If true the player is currently jumping.
@@ -226,6 +259,13 @@ Vertical velocity: {mVerticalVelocity}";
 
         mCamera.Current = mIsRealPlayer;
         mModel.Visible = !mIsRealPlayer;
+
+        // Setup specific to server/client.
+        if (GetTree().IsNetworkServer()) {
+            mPlayerInputQueue = new Queue<Snap>();
+        } else {
+            mPlayerInputList = new List<Tst.Input>();
+        }
     }
 
     public override void _UnhandledInput(InputEvent @event) {
@@ -238,8 +278,7 @@ Vertical velocity: {mVerticalVelocity}";
             Input.MouseMode == Input.MouseModeEnum.Captured) {
             float dx = -mouseEvent.Relative.x * mMouseSensitivity;
             float dy = -mouseEvent.Relative.y * mMouseSensitivity;
-            mDy += dy;
-            mDx += dx;
+            mInputs = mInputs.DeltaMouse(dx, dy);
             MoveHead(dx, dy);
         }
     }
@@ -276,9 +315,7 @@ Vertical velocity: {mVerticalVelocity}";
             Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
-    public override void _PhysicsProcess(float delta) {
-        base._PhysicsProcess(delta);
-
+    private void SimulatePhysics(float delta) {
         mIsStep = false;
 
         float forwardInput = mInputs.forwards;
@@ -289,8 +326,7 @@ Vertical velocity: {mVerticalVelocity}";
             strafeInput =
                 Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
 
-            mInputs = new Tst.Input(strafeInput, forwardInput);
-            mWishJump = QueueJump();
+            mInputs = mInputs.SetDirs(strafeInput, forwardInput).SetJump(QueueJump());
             SendInputPacket();
         } else if (GetTree().IsNetworkServer()) {
             // Get inputs.
@@ -511,10 +547,15 @@ Vertical velocity: {mVerticalVelocity}";
             SendPlayerState();
         }
 
-        if (mWishJump) {
+        if (mInputs.jump) {
             mIsJump = true;
-            mWishJump = false;
         }
+    }
+
+    public override void _PhysicsProcess(float delta) {
+        base._PhysicsProcess(delta);
+        SimulatePhysics(delta);
+        ++mCurTick;
     }
 
     // This is were we calculate the speed to add to current velocity
@@ -562,15 +603,14 @@ Vertical velocity: {mVerticalVelocity}";
     // Set wish_jump depending on player input.
     private bool QueueJump() {
         if (!mIsRealPlayer) {
-            return mWishJump;
+            return mInputs.jump;
         }
-        if(!IsOnFloor()) {
+        if (!IsOnFloor()) {
             return false;
         }
         // If auto_jump is true, the player keeps jumping as long as the key is kept down.
         if (mAutoJump) {
-            mWishJump = Input.IsActionPressed("jump");
-            return false;
+            return Input.IsActionPressed("jump");
         }
 
         if (Input.IsActionJustPressed("jump")) {
@@ -606,9 +646,6 @@ Vertical velocity: {mVerticalVelocity}";
         mVelocity = nextVelocity;
     }
 
-    private float mDy = 0F;
-    private float mDx = 0F;
-
     private void MoveHead(float dx, float dy) {
         mBody.RotateY(Mathf.Deg2Rad(dx));
         mHead.RotateX(Mathf.Deg2Rad(dy));
@@ -643,10 +680,11 @@ Vertical velocity: {mVerticalVelocity}";
             GD.PrintErr($"Forward movement value is not finite");
             return;
         }
+        // TODO make this tst from the snap in a better way and validate (probably as a
+        // constructor).
 
         // Move.
-        mInputs = new Tst.Input(strafe, forward);
-        mWishJump = jump;
+        mInputs = new Tst.Input(strafe, forward, dx, dy, jump);
         mAutoJump = autoJump;
         MoveHead(dx, dy);
     }
@@ -680,18 +718,17 @@ Vertical velocity: {mVerticalVelocity}";
 
     private void SendInputPacket() {
         Snap send = new Snap() {
-            { "dx",                                mDx},
-            { "dy",                                mDy},
-            {"hlt",                    mHead.Transform},
-            {"blt",                    mBody.Transform},
-            {"str",                     mInputs.strafe},
-            {"for",                   mInputs.forwards},
-            {"jmp",                          mWishJump},
-            {"ajp",                          mAutoJump},
-            { "ts", OS.GetSystemTimeMsecs().ToString()}
+            {  "dx",                         mInputs.dx},
+            {  "dy",                         mInputs.dy},
+            { "str",                     mInputs.strafe},
+            { "for",                   mInputs.forwards},
+            { "jmp",                       mInputs.jump},
+            { "ajp",                          mAutoJump},
+            {  "ts", OS.GetSystemTimeMsecs().ToString()},
+            {"tick",                mCurTick.ToString()}
         };
-        mDx = 0;
-        mDy = 0;
+        mPlayerInputList.Add(mInputs);
+        mInputs.ResetMouse();
         mSceneRef.SendPlayerInput(send);
     }
 
@@ -705,7 +742,8 @@ Vertical velocity: {mVerticalVelocity}";
             {"grav",           mGravityVec},
             {"snap",                 mSnap},
             {"vvel",     mVerticalVelocity},
-            {"wdir",              mWishDir}
+            {"wdir",              mWishDir},
+            {"tick",   mCurTick.ToString()}
         };
         mSceneRef.SendPlayerState(mNetworkId, state);
     }

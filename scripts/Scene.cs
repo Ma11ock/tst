@@ -43,7 +43,7 @@ public class Scene : Spatial, Tst.Debuggable {
     /// <summary>
     /// Amount of time to interpolate between frames. Only used by the client.
     /// </summary>
-    private ulong mInterpolationConstant = 50;
+    private ulong mInterpolationConstant = 100;
 
     /// <summary>
     /// Timer used to determine when to send the world state to the client. Only used by the server.
@@ -223,6 +223,11 @@ Snapshots/second: {mPacketUpdateRate}";
 
                     if (pl == null) {
                         GD.PrintErr($"Object at {player} is not a Player!");
+                        continue;
+                    }
+
+                    if (pl.mIsRealPlayer) {
+                        // Don't interpolate this player.
                         continue;
                     }
 
