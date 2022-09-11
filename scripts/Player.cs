@@ -564,6 +564,9 @@ Vertical velocity: {mVerticalVelocity}";
         if (!mIsRealPlayer) {
             return mWishJump;
         }
+        if(!IsOnFloor()) {
+            return false;
+        }
         // If auto_jump is true, the player keeps jumping as long as the key is kept down.
         if (mAutoJump) {
             mWishJump = Input.IsActionPressed("jump");
