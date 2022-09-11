@@ -21,6 +21,18 @@ class Autoload : Node {
         }
     }
 
+    private int GetNextArgI(string[] args, ref int i) {
+        try {
+            return GetNextArg(args, ref i).ToInt();
+        } catch (FormatException) {
+            throw new InvalidDataException(
+                $"{args[i - i]} takes an int as an argument, but got \"{args[i]}\" instead.");
+        } catch (OverflowException) {
+            throw new InvalidDataException(
+                $"{args[i - i]} takes an int as an argument, but got \"{args[i]}\", which is out of range for an int [{int.MinValue}-{int.MaxValue}].");
+        }
+    }
+
     public override void _Ready() {
         base._Ready();
         mNetwork = GetNode<Network>("/root/Network");
@@ -46,20 +58,12 @@ class Autoload : Node {
         for (int i = 0; i < args.Length; i++) {
             switch (args[i]) {
             case "--mk-server":
+                settings = SCSettings.Server;
+                port = GetNextArgI(args, ref i);
+                break;
             case "--mk-client":
-                // Check for cmd arg misconfig.
-                switch (settings) {
-                case SCSettings.Server:
-                    errstr = "mk-client and mk-server both specified";
-                    GD.PrintErr(errstr);
-                    throw new InvalidDataException(errstr);
-                case SCSettings.Client:
-                    errstr = "mk-client specified twice";
-                    GD.PrintErr(errstr);
-                    throw new InvalidDataException(errstr);
-                }
-                settings = args[i] == "--mk-server" ? SCSettings.Server : SCSettings.Client;
-
+                settings = SCSettings.Client;
+                // Try getting the port. If that fails, try getting a host and port.
                 try {
                     nextArg = GetNextArg(args, ref i);
                     port = args[i].ToInt();
@@ -92,6 +96,7 @@ class Autoload : Node {
         switch (settings) {
         case SCSettings.None:
             // Turn this Godot instance into a server and make a client.
+            GD.Print($"Starting server on port {port}...");
             port = mNetwork.CreateServer(0);
             GD.Print($"Started server on port {port}.");
             string[] clientArgs = new string[] { "--mk-client", port.ToString() };
@@ -102,10 +107,13 @@ class Autoload : Node {
             OS.Execute(exe, clientArgs, false);
             break;
         case SCSettings.Server:
+            GD.Print($"Starting server on port {port}...");
+            port = mNetwork.CreateServer(port);
+            GD.Print($"Started server on port {port}.");
             break;
         case SCSettings.Client:
             GD.Print($"Starting client on {host}:{port}.");
-            mNetwork.JoinServer(port);
+            mNetwork.JoinServer(mNetwork.mIpAddress, port);
             break;
         }
     }

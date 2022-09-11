@@ -20,10 +20,6 @@ public struct Input {
         this.forwards = forwards;
     }
 
-    public Input ResetMouse() {
-        return new Input(strafe, forwards);
-    }
-
     public override string ToString() {
         return $"strafe = {strafe}, forwards = {forwards}";
     }
@@ -300,8 +296,6 @@ Vertical velocity: {mVerticalVelocity}";
             // Get inputs.
             NextInput();
         }
-        mInputs = mInputs.ResetMouse();
-
         mWishDir = new Vector3(strafeInput, 0F, forwardInput)
                        .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
                        .Normalized();

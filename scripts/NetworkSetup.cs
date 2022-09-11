@@ -26,7 +26,7 @@ public class NetworkSetup : Control {
 
     public void _OnJoinPressed() {
         IsServer = false;
-        mNetwork.JoinServer();
+        mNetwork.JoinServer(mNetwork.mIpAddress);
         Hide();
         //mGlobal.EmitSignal("InstancePlayer", GetTree().GetNetworkUniqueId());
     }

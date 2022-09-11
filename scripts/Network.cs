@@ -54,7 +54,7 @@ class Network : Godot.Node {
         return port;
     }
 
-    public void JoinServer(int port = DEFAULT_PORT) {
+    public void JoinServer(string addr, int port = DEFAULT_PORT) {
         GD.Print("Joining server...");
         mClient = new NetworkedMultiplayerENet();
         mClient.CreateClient(mIpAddress, port);
