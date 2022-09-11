@@ -64,7 +64,7 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// <summary>
     /// True if this player instance is client's player character.
     /// </summary>
-    private bool mIsRealPlayer = false;
+    public bool mIsRealPlayer { get; private set; } = false;
 
     /// <summary>
     /// Mark this player as being the client's player.

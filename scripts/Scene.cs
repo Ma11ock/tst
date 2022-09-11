@@ -158,101 +158,209 @@ Snapshots/second: {mPacketUpdateRate}";
         ulong renderTime = OS.GetSystemTimeMsecs() - mInterpolationConstant;
         if (mWorldCache.Count > 1) {
             while (mWorldCache.Count > 2 &&
-                   renderTime > Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue)) {
+                   renderTime > Util.TryGetVOr(mWorldCache[2], "ts", ulong.MaxValue)) {
                 // The world state is too old to be in the future, remove it.
-                // This pushes mWorldCache[1] to the front, making it the old state.
+                // This pushes mWorldCache[2] to the front, making it the old state.
                 mWorldCache.RemoveAt(0);
             }
-            ulong mostRecentTs = Util.TryGetVOr(mWorldCache[0], "ts", ulong.MaxValue);
-            ulong futureTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
-            // Determine how much time has passed since the old state and the future state.
-            float interpFactor =
-                (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
-            // Ensure the factor is valid and wont mess up Lerp().
-            const float MIN_FACTOR = 0.01F;
-            interpFactor = Util.IsFinite(interpFactor) ? interpFactor : MIN_FACTOR;
-            interpFactor = Mathf.Clamp(interpFactor, MIN_FACTOR, 1F);
+            if (mWorldCache.Count > 2) {
+                // We have a future state.
+                ulong mostRecentTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
+                ulong futureTs = Util.TryGetVOr(mWorldCache[2], "ts", ulong.MaxValue);
+                // Determine how much time has passed since the old state and the future state.
+                float interpFactor =
+                    (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
+                // Ensure the factor is valid and wont mess up Lerp().
+                const float MIN_FACTOR = 0.01F;
+                interpFactor = Util.IsFinite(interpFactor) ? interpFactor : MIN_FACTOR;
+                interpFactor = Mathf.Clamp(interpFactor, MIN_FACTOR, 1F);
 
-            Snap oldPlayers = (Snap)mWorldCache[0]["plys"];
-            Snap newPlayers = (Snap)mWorldCache[1]["plys"];
+                Snap oldPlayers = (Snap)mWorldCache[1]["plys"];
+                Snap newPlayers = (Snap)mWorldCache[2]["plys"];
 
-            // Lerp players.
-            foreach(var key in newPlayers.Keys) {
-                string player = "";
-                if (key is string p) {
-                    player = p;
-                } else if (key is int pi) {
-                    player = pi.ToString();
-                } else {
-                    GD.PrintErr(
-                        $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
-                    continue;
+                // Lerp players.
+                foreach(var key in newPlayers.Keys) {
+                    string player = "";
+                    if (key is string p) {
+                        player = p;
+                    } else if (key is int pi) {
+                        player = pi.ToString();
+                    } else {
+                        GD.PrintErr(
+                            $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
+                        continue;
+                    }
+
+                    if (!oldPlayers.Contains(player)) {
+                        // Do not lerp the player if they don't exist in both snapshots.
+                        continue;
+                    }
+
+                    Snap oldPlayerDat = null;
+                    Snap playerDat = null;
+                    try {
+                        playerDat = (Snap)newPlayers[player];
+                        oldPlayerDat = (Snap)oldPlayers[player];
+                    } catch (System.Collections.Generic.KeyNotFoundException) {
+                        GD.PrintErr($"Player with id {player} was not found.");
+                    } catch (InvalidCastException e) {
+                        GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+                    } catch (Exception e) {
+                        GD.PrintErr($"Error in receiving world state: {e}");
+                    }
+                    if (playerDat == null || oldPlayerDat == null) {
+                        // Skip if error.
+                        continue;
+                    }
+
+                    if (!HasNode(player)) {
+                        // TODO dont error, spawn a player.
+                        GD.PrintErr($"Player {player} does not exist in scene tree.");
+                        continue;
+                    }
+
+                    Player pl = GetNodeOrNull<Player>(player);
+
+                    if (pl == null) {
+                        GD.PrintErr($"Object at {player} is not a Player!");
+                        continue;
+                    }
+
+                    // Calculate the position by lerping.
+                    try {
+                        Transform oldPosition = (Transform)oldPlayerDat["gt"];
+                        Transform futurePosition = (Transform)playerDat["gt"];
+                        Transform newTransform =
+                            oldPosition.InterpolateWith(futurePosition, interpFactor);
+                        playerDat["gt"] = newTransform;
+                        Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
+                        Transform futureHeadPosition = (Transform)playerDat["hgt"];
+                        Transform newHeadTransform =
+                            oldHeadPosition.InterpolateWith(futureHeadPosition, interpFactor);
+                        Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
+                        Transform futureBodyPosition = (Transform)playerDat["bgt"];
+                        Transform newBodyTransform =
+                            oldBodyPosition.InterpolateWith(futureBodyPosition, interpFactor);
+                        playerDat["gt"] = newTransform;
+                        playerDat["hgt"] = newHeadTransform;
+                        playerDat["bgt"] = newBodyTransform;
+                        pl.UpdatePlayer(playerDat);
+                        playerDat["gt"] = futurePosition;
+                        playerDat["hgt"] = futureHeadPosition;
+                        playerDat["bgt"] = futureBodyPosition;
+                    } catch (System.Collections.Generic.KeyNotFoundException) {
+                        GD.PrintErr($"Player snapshot invalid (no transform). Not interpolating.");
+                    } catch (InvalidCastException e) {
+                        GD.PrintErr(
+                            $"Player snapshot invalid (global transform is not a valid type): {e}. Not interpolating.");
+                    } catch (Exception e) {
+                        GD.PrintErr($"Error in reading trasnforms: {e}");
+                    }
                 }
+            } else if (renderTime > Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue)) {
+                // TODO test extrapolation. Hard to do since we'd have to drop packets.
+                ulong pastpastTs = Util.TryGetVOr(mWorldCache[0], "ts", ulong.MaxValue);
+                ulong pastTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
+                // Determine how much time has passed since the old state and the future state.
+                // No future world state. Only past world states.
+                float extrapFactor =
+                    (float)(renderTime - pastpastTs) / (float)(pastTs - pastpastTs) - 1F;
+                // Ensure the factor is valid and wont mess up Lerp().
+                const float MIN_FACTOR = 0.01F;
+                extrapFactor = Util.IsFinite(extrapFactor) ? extrapFactor : MIN_FACTOR;
+                extrapFactor = Mathf.Clamp(extrapFactor, MIN_FACTOR, 1F);
 
-                if (!oldPlayers.Contains(player)) {
-                    // Do not lerp the player if they don't exist in both snapshots.
-                    continue;
-                }
+                Snap oldOldPlayers = (Snap)mWorldCache[0]["plys"];
+                Snap oldPlayers = (Snap)mWorldCache[1]["plys"];
 
-                Snap oldPlayerDat = null;
-                Snap playerDat = null;
-                try {
-                    playerDat = (Snap)newPlayers[player];
-                    oldPlayerDat = (Snap)oldPlayers[player];
-                } catch (System.Collections.Generic.KeyNotFoundException) {
-                    GD.PrintErr($"Player with id {player} was not found.");
-                } catch (InvalidCastException e) {
-                    GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
-                } catch (Exception e) {
-                    GD.PrintErr($"Error in receiving world state: {e}");
-                }
-                if (playerDat == null || oldPlayerDat == null) {
-                    // Skip if error.
-                    continue;
-                }
+                foreach(var key in oldPlayers.Keys) {
+                    string player = "";
+                    if (key is string p) {
+                        player = p;
+                    } else if (key is int pi) {
+                        player = pi.ToString();
+                    } else {
+                        GD.PrintErr(
+                            $"Invalid key type for world update: got {key.GetType()}, expected int or string.");
+                        continue;
+                    }
 
-                if (!HasNode(player)) {
-                    // TODO dont error, spawn a player.
-                    GD.PrintErr($"Player {player} does not exist in scene tree.");
-                    continue;
-                }
+                    if (!oldPlayers.Contains(player)) {
+                        // Do not lerp the player if they don't exist in both snapshots.
+                        continue;
+                    }
 
-                Player pl = GetNodeOrNull<Player>(player);
+                    Snap oldOldPlayerDat = null;
+                    Snap oldPlayerDat = null;
+                    try {
+                        oldPlayerDat = (Snap)oldPlayers[player];
+                        oldOldPlayerDat = (Snap)oldOldPlayers[player];
+                    } catch (System.Collections.Generic.KeyNotFoundException) {
+                        GD.PrintErr($"Player with id {player} was not found.");
+                    } catch (InvalidCastException e) {
+                        GD.PrintErr($"Player data for {player} is not a Snapshot: {e}");
+                    } catch (Exception e) {
+                        GD.PrintErr($"Error in receiving world state: {e}");
+                    }
+                    if (oldPlayerDat == null || oldOldPlayerDat == null) {
+                        // Skip if error.
+                        continue;
+                    }
 
-                if (pl == null) {
-                    GD.PrintErr($"Object at {player} is not a Player!");
-                    continue;
-                }
+                    if (!HasNode(player)) {
+                        // TODO dont error, spawn a player.
+                        GD.PrintErr($"Player {player} does not exist in scene tree.");
+                        continue;
+                    }
 
-                // Calculate the position by lerping.
-                try {
-                    Transform oldPosition = (Transform)oldPlayerDat["gt"];
-                    Transform futurePosition = (Transform)playerDat["gt"];
-                    Transform newTransform =
-                        oldPosition.InterpolateWith(futurePosition, interpFactor);
-                    playerDat["gt"] = newTransform;
-                    Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
-                    Transform futureHeadPosition = (Transform)playerDat["hgt"];
-                    Transform newHeadTransform =
-                        oldHeadPosition.InterpolateWith(futureHeadPosition, interpFactor);
-                    Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
-                    Transform futureBodyPosition = (Transform)playerDat["bgt"];
-                    Transform newBodyTransform =
-                        oldBodyPosition.InterpolateWith(futureBodyPosition, interpFactor);
-                    playerDat["gt"] = newTransform;
-                    playerDat["hgt"] = newHeadTransform;
-                    playerDat["bgt"] = newBodyTransform;
-                    pl.UpdatePlayer(playerDat);
-                    playerDat["gt"] = futurePosition;
-                    playerDat["hgt"] = futureHeadPosition;
-                    playerDat["bgt"] = futureBodyPosition;
-                } catch (System.Collections.Generic.KeyNotFoundException) {
-                    GD.PrintErr($"Player snapshot invalid (no transform). Not interpolating.");
-                } catch (InvalidCastException e) {
-                    GD.PrintErr(
-                        $"Player snapshot invalid (global transform is not a valid type): {e}. Not interpolating.");
-                } catch (Exception e) {
-                    GD.PrintErr($"Error in reading trasnforms: {e}");
+                    Player pl = GetNodeOrNull<Player>(player);
+                    if (pl == null) {
+                        GD.PrintErr($"Object at {player} is not a Player!");
+                        continue;
+                    }
+
+                    if (pl.mIsRealPlayer) {
+                        // Don't extrapolate this player.
+                        continue;
+                    }
+
+                    // Guess the position thru extrapolation.
+                    try {
+                        Transform oldPosition = (Transform)oldPlayerDat["gt"];
+                        Transform oldOldPosition = (Transform)oldOldPlayerDat["gt"];
+                        Vector3 positionDelta = oldPosition.origin - oldOldPosition.origin;
+                        Vector3 newPosition = oldPosition.origin + (positionDelta * extrapFactor);
+
+                        Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
+                        Transform oldOldHeadPosition = (Transform)oldOldPlayerDat["hgt"];
+                        Vector3 positionHeadDelta =
+                            oldHeadPosition.origin - oldOldHeadPosition.origin;
+                        Vector3 newHeadPosition =
+                            oldHeadPosition.origin + (positionHeadDelta * extrapFactor);
+
+                        Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
+                        Transform oldOldBodyPosition = (Transform)oldOldPlayerDat["bgt"];
+                        Vector3 positionBodyDelta =
+                            oldBodyPosition.origin - oldOldBodyPosition.origin;
+                        Vector3 newBodyPosition =
+                            oldBodyPosition.origin + (positionBodyDelta * extrapFactor);
+                        // Alter the player state before sending it to the player.
+                        oldPlayerDat["gt"] = new Transform(oldPosition.basis, newPosition);
+                        oldPlayerDat["hgt"] = new Transform(oldHeadPosition.basis, newHeadPosition);
+                        oldPlayerDat["bgt"] = new Transform(oldBodyPosition.basis, newBodyPosition);
+                        pl.UpdatePlayer(oldPlayerDat);
+                        // Reset the states after informing the player.
+                        oldPlayerDat["gt"] = oldPosition;
+                        oldPlayerDat["hgt"] = oldHeadPosition;
+                        oldPlayerDat["bgt"] = oldBodyPosition;
+                    } catch (System.Collections.Generic.KeyNotFoundException) {
+                        GD.PrintErr($"Player snapshot invalid (no transform). Not interpolating.");
+                    } catch (InvalidCastException e) {
+                        GD.PrintErr(
+                            $"Player snapshot invalid (global transform is not a valid type): {e}. Not interpolating.");
+                    } catch (Exception e) {
+                        GD.PrintErr($"Error in reading trasnforms: {e}");
+                    }
                 }
             }
         }
