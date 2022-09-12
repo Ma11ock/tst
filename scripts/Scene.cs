@@ -227,7 +227,9 @@ Snapshots/second: {mPacketUpdateRate}";
                     }
 
                     if (pl.mIsRealPlayer) {
-                        // Don't interpolate this player.
+                        // Don't interpolate this player. Just give it its update.
+                        newPlayers[player] =
+                            pl.ClientPredict(playerDat, interpFactor, mGotPacketThisTick);
                         continue;
                     }
 
@@ -369,9 +371,12 @@ Snapshots/second: {mPacketUpdateRate}";
                 }
             }
         }
+
+        mGotPacketThisTick = false;
     }
 
     private void PhysicsProcessServer(float delta) {
+        // Send packets at the configured rate (20/s by default).
         if (mPlayerStates.Count > 0 && (mPacketTimer += delta) > mPacketSendInterval) {
             mPacketTimer -= mPacketSendInterval;
             mWorldState["ts"] = OS.GetSystemTimeMsecs().ToString();
@@ -529,13 +534,15 @@ Snapshots/second: {mPacketUpdateRate}";
         GetNode<Player>(playerId).PlayerInput(playerState);
     }
 
+    bool mGotPacketThisTick = false;
+
     /// <summary>
     /// Receive world state from the server. Used only by the client.
     /// </summary>
     [Puppet]
     public void RecvWorldState(Snap input) {
-        // Do players first.
         mPacketCounter++;
+        mGotPacketThisTick = true;
         ulong ts = Util.TryGetVOr(input, "ts", ulong.MaxValue);
         if (ts > mWorldTs) {
             mWorldCache.Add(input);

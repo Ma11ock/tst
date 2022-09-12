@@ -10,11 +10,24 @@ using Snap = Godot.Collections.Dictionary;
 namespace Tst {
 
 /// <summary>
+/// Player input struct.
 /// </summary>
 public struct Input {
+    /// <summary>
+    /// Strafe values. Should range from [-1,1].
+    /// </summary>
     public float strafe { get; private set; }
+    /// <summary>
+    /// Forward/backwards values. Should range from [-1,1].
+    /// </summary>
     public float forwards { get; private set; }
+    /// <summary>
+    /// Change in mouse's X direction.
+    /// </summary>
     public float dx { get; private set; }
+    /// <summary>
+    /// Change in mouse's Y direction.
+    /// </summary>
     public float dy { get; private set; }
     /// <summary>
     /// If true, player has queued a jump : the jump key can be held down before hitting the ground
@@ -22,41 +35,111 @@ public struct Input {
     /// </summary>
     public bool jump { get; private set; }
 
+    public ulong id { get; private set; }
+
+    /// <summary>
+    /// Create a new input with strafe and forward set, everything else set to 0.
+    /// </summary>
+    /// <param name="strafe"> Strafe value. </param>
+    /// <param name="strafe"> Forwards value. </param>
     public Input(float strafe, float forwards) {
         this.strafe = strafe;
         this.forwards = forwards;
         this.dx = 0F;
         this.dy = 0F;
         this.jump = false;
+        this.id = 0;
     }
 
+    /// <summary>
+    /// Create a new input. Full constructor, sets all members.
+    /// <param name="strafe"> Strafe value. </param>
+    /// <param name="strafe"> Forwards value. </param>
+    /// <param name="dx"> Mouse x value. </param>
+    /// <param name="dy"> Mouse y value. </param>
+    /// <param name="jump"> This frame's jump value. </param>
+    /// </summary>
     public Input(float strafe, float forwards, float dx, float dy, bool jump) {
         this.strafe = strafe;
         this.forwards = forwards;
         this.dx = dx;
         this.dy = dy;
         this.jump = jump;
+        this.id = 0;
     }
 
-    public override string ToString() => $"strafe = {strafe}, forwards = {forwards}";
+    /// <summary>
+    /// Create a new input. Full constructor, sets all members.
+    /// </summary>
+    /// <returns> Create a string representation of all of <c>Input</c>'s members. </returns>
+    public override string ToString() =>
+        $"strafe = {strafe}, forwards = {forwards}, dx = {dx}, dy = {dy}, jump = {jump}";
 
+    /// <summary>
+    /// Create a new input. Sets the mouse values, all other values are unchanged.
+    /// </summary>
+    /// <param name="dx"> Mouse x value. </param>
+    /// <param name="dy"> Mouse y value. </param>
     public Input SetMouse(float dx, float dy) => new Input(this.strafe, this.forwards, dx, dy,
                                                            this.jump);
+    /// <summary>
+    /// Create a new input. Sets the mouse values to <see cref="dx"> + dx, and <see cref="dy"> + dy.
+    /// Keep all remaining values the same.
+    /// </summary>
+    /// <param name="dx"> Mouse x value. </param>
+    /// <param name="dy"> Mouse y value. </param>
     public Input DeltaMouse(float dx, float dy) => new Input(this.strafe, this.forwards,
                                                              this.dx + dx, this.dy + dy, this.jump);
 
+    /// <summary>
+    /// Create a new input. Sets the mouse values to <see cref="dx"> + dx, and <see cref="dy"> + dy.
+    /// Keep all remaining values the same.
+    /// </summary>
+    /// <param name="dx"> Mouse x value. </param>
+    /// <param name="dy"> Mouse y value. </param>
     public Input ResetMouse() => SetMouse(0F, 0F);
 
+    /// <summary>
+    /// Create a new input. Sets the direction to strafe and forwards. All other values remain the
+    /// same.
+    /// </summary>
+    /// <param name="strafe"> Strafe value. </param>
+    /// <param name="strafe"> Forwards value. </param>
     public Input SetDirs(float strafe, float forwards) => new Input(strafe, forwards, this.dx,
                                                                     this.dy, this.jump);
 
+    /// <summary>
+    /// Create a new input. Sets <see cref="jump"> to jump. All other values remain the same.
+    /// </summary>
+    /// <param name="jump"> Jump value. </param>
     public Input SetJump(bool wishJump = true) => new Input(this.strafe, this.forwards, this.dx,
                                                             this.dy, wishJump);
+
+    public Input SetId(ulong id) {
+        this.id = id;
+        return this;
+    }
 }
 }
 
 /// <summary>
-/// Player class.
+/// Player class. When run on a client, the Player can be:
+/// <list type="bullet">
+/// <item><term>Client's player</term><description>The player for this client's session. Interprets
+/// inputs, does client-side prediction, etc.</description>
+/// </item>
+/// <item>
+/// <term>Client puppet player</term>
+/// <description>Player object of someone else's client. The player is a dummy object
+/// mastered by the server. It acts as any other physics object in the
+/// simulation.</description>
+/// </item>
+//// <item>
+/// <term>Server player</term>
+/// <description>Remote player /represented by a client. Interprets user
+/// inputs.</description>
+/// </item>
+/// </list>
 /// </summary>
 public class Player : KinematicBody, Tst.Debuggable {
     // Children nodes.
@@ -85,6 +168,17 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// Queue of player inputs. Used only by the server.
     /// </summary>
     private Queue<Snap> mPlayerInputQueue = null;
+
+    /// <summary>
+    /// Last state predicted by the client. Only used by the client's real player.
+    /// </summary>
+    private Snap mLastPredictedState = null;
+
+    /// <summary>
+    /// Input counter used to track which inputs the server has processed. Used only by the client's
+    /// player.
+    /// </summary>
+    private ulong mInputIdCounter = 0;
 
     /// <summary>
     /// List of player inputs. Used only by the client for rollback and reconciliation.
@@ -193,30 +287,73 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// If true the player is currently jumping.
     /// </summary>
     private bool mIsJump = false;
-    private bool mAutoJump = false;  // If true, player has queued a jump : the jump key can be
-                                     // held down before hitting the ground to jump.
+    /// <summary>
+    /// If true, player has queued a jump : the jump key can be
+    /// held down before hitting the ground to jump.
+    /// </summary>
+    private bool mAutoJump = false;
 
     // For stair snapping.
+    /// <summary>
+    /// Linear interpolation constant for stair stepping.
+    /// </summary>
     public const float STAIRS_FEELING_COEFFICIENT = 2.5F;
+    /// <summary>
+    /// Constant for wall collisions in stairs code.
+    /// </summary>
     public const float WALL_MARGIN = 0.001F;
+    /// <summary>
+    /// Constant for checking step height.
+    /// </summary>
     public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
+    /// <summary>
+    /// Constant for checking step angles.
+    /// </summary>
     public const float STEP_MAX_SLOPE_DEGREE = 0F;
+    /// <summary>
+    /// Times to check for steps.
+    /// </summary>
     public const int STEP_CHECK_COUNT = 2;
+    /// <summary>
+    /// ?
+    /// </summary>
     private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
+    /// <summary>
+    ///
+    /// </summary>
     private Vector3 mHeadOffset = Vector3.Zero;
+    /// <summary>
+    /// Euler angle in Y direction for interpolation.
+    /// </summary>
     private float mBodyEulerY = 0F;
-    private bool mIsStep = false;
 
     // Camera interpolation on stairs.
-    private float mCameraFeelingCoefficient = 2.5F;
+    /// <summary>
+    /// Camera target position for stairstep interpolation.
+    /// </summary>
     private Vector3 mCameraTargetPos = Vector3.Zero;
+    /// <summary>
+    /// TODO
+    /// </summary>
     private float mCameraCoefficient = 1.0F;
+    /// <summary>
+    /// Time spent in air for interpolation.
+    /// </summary>
     private float mTimeInAir = 0F;
 
+    /// <summary>
+    /// ID for debugging system.
+    /// </summary>
     private ulong mDebugId = 0;
 
+    /// <summary>
+    /// Get the debugger id.
+    /// </summary>
     public ulong GetDebugId() => mDebugId;
 
+    /// <summary>
+    /// Set the debugger ID.
+    /// </summary>
     public void SetDebugId(ulong id) => mDebugId = id;
 
     public void GetDebug(Control c) {
@@ -265,6 +402,7 @@ Vertical velocity: {mVerticalVelocity}";
             mPlayerInputQueue = new Queue<Snap>();
         } else {
             mPlayerInputList = new List<Tst.Input>();
+            mLastPredictedState = SnapshotState();
         }
     }
 
@@ -285,6 +423,9 @@ Vertical velocity: {mVerticalVelocity}";
 
     public override void _Process(float delta) {
         base._Process(delta);
+        if (!mIsRealPlayer) {
+            return;
+        }
         //  Find the current interpolated transform of the target.
         Transform tr = mHead.GetGlobalTransformInterpolated();
 
@@ -294,6 +435,7 @@ Vertical velocity: {mVerticalVelocity}";
 
         mCamera.Translation = Util.ChangeX(mCamera.Translation, tr.origin.x);
 
+        // TODO fix mCameraCoefficient vs CAMERA_COEFFICIENT
         if (IsOnFloor()) {
             mTimeInAir = 0F;
             mCameraCoefficient = 1.0F;
@@ -315,12 +457,12 @@ Vertical velocity: {mVerticalVelocity}";
             Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
-    private void SimulatePhysics(float delta) {
-        mIsStep = false;
+    private void SimulatePhysics(float delta, bool dummyInput = false) {
+        bool isStep = false;
 
         float forwardInput = mInputs.forwards;
         float strafeInput = mInputs.strafe;
-        if (mIsRealPlayer && !Global.InputCaptured) {
+        if (mIsRealPlayer && !Global.InputCaptured && !dummyInput) {
             forwardInput =
                 Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
             strafeInput =
@@ -397,7 +539,7 @@ Vertical velocity: {mVerticalVelocity}";
                             if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
                                 Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
                                 mHeadOffset = -testMotionResult.MotionRemainder;
-                                mIsStep = true;
+                                isStep = true;
                                 GlobalTransform = Util.ChangeTFormOrigin(
                                     GlobalTransform,
                                     GlobalTransform.origin + -testMotionResult.MotionRemainder);
@@ -423,7 +565,7 @@ Vertical velocity: {mVerticalVelocity}";
                                 testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
                                     Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
                                 mHeadOffset = -testMotionResult.MotionRemainder;
-                                mIsStep = true;
+                                isStep = true;
                                 GlobalTransform = Util.ChangeTFormOrigin(
                                     GlobalTransform,
                                     GlobalTransform.origin + -testMotionResult.MotionRemainder);
@@ -454,7 +596,7 @@ Vertical velocity: {mVerticalVelocity}";
                                 if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
                                     Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
                                     mHeadOffset = -testMotionResult.MotionRemainder;
-                                    mIsStep = true;
+                                    isStep = true;
                                     GlobalTransform = Util.ChangeTFormOrigin(
                                         GlobalTransform,
                                         GlobalTransform.origin + -testMotionResult.MotionRemainder);
@@ -469,7 +611,7 @@ Vertical velocity: {mVerticalVelocity}";
 
         bool isFalling = false;
 
-        if (!mIsStep && IsOnFloor()) {
+        if (!isStep && IsOnFloor()) {
             PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
 
             Vector3 stepHeight = STEP_HEIGHT_DEFAULT;
@@ -488,7 +630,7 @@ Vertical velocity: {mVerticalVelocity}";
                     if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
                         Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
                         mHeadOffset = testMotionResult.Motion;
-                        mIsStep = true;
+                        isStep = true;
                         GlobalTransform = Util.ChangeTFormOrigin(
                             GlobalTransform,
                             GlobalTransform.origin + testMotionResult.MotionRemainder);
@@ -513,7 +655,7 @@ Vertical velocity: {mVerticalVelocity}";
                             if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
                                 Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
                                 mHeadOffset = testMotionResult.Motion;
-                                mIsStep = true;
+                                isStep = true;
                                 GlobalTransform = Util.ChangeTFormOrigin(
                                     GlobalTransform,
                                     GlobalTransform.origin + testMotionResult.MotionRemainder);
@@ -526,7 +668,7 @@ Vertical velocity: {mVerticalVelocity}";
             }
         }
 
-        if (!mIsStep) {
+        if (!isStep) {
             mHeadOffset = mHeadOffset.LinearInterpolate(
                 Vector3.Zero, delta * mVelocity.Length() * STAIRS_FEELING_COEFFICIENT);
         }
@@ -552,10 +694,24 @@ Vertical velocity: {mVerticalVelocity}";
         }
     }
 
+    private Snap SnapshotState() => new Snap() {
+        {  "gt",                    GlobalTransform},
+        { "hgt",              mHead.GlobalTransform},
+        { "bgt",              mBody.GlobalTransform},
+        { "vel",                          mVelocity},
+        { "ajp",                          mAutoJump},
+        {"grav",                        mGravityVec},
+        {"snap",                              mSnap},
+        {"vvel",                  mVerticalVelocity},
+        {"wdir",                           mWishDir},
+        {  "ts", OS.GetSystemTimeMsecs().ToString()},
+        {"tick",                mCurTick.ToString()}
+    };
+
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
-        SimulatePhysics(delta);
         ++mCurTick;
+        SimulatePhysics(delta);
     }
 
     // This is were we calculate the speed to add to current velocity
@@ -657,11 +813,14 @@ Vertical velocity: {mVerticalVelocity}";
         Transform = Transform.Orthonormalized();
     }
 
+    ulong macks = 0;
+
     private void NextInput() {
         if (mPlayerInputQueue.Count < 1 || !GetTree().IsNetworkServer()) {
             return;
         }
         Snap dat = mPlayerInputQueue.Dequeue();
+        macks = Util.TryGetVOr(dat, "tick", ulong.MaxValue);
         float dx = Util.TryGetVOr<float>(dat, "dx", 0F);
         float dy = Util.TryGetVOr<float>(dat, "dy", 0F);
         float strafe = Util.TryGetVOr<float>(dat, "str", 0F);
@@ -696,8 +855,60 @@ Vertical velocity: {mVerticalVelocity}";
         mPlayerInputQueue.Enqueue(dat);
     }
 
-    public void UpdatePlayer(Snap recv) {
+    public Snap ClientPredict(Snap recv, float factor, bool fromServer) {
+        if (!mIsRealPlayer) {
+            return null;
+        }
+        if (!fromServer) {
+            return recv;
+        }
+        mLastPredictedState = SnapshotState();
         // TODO instead of current values, should be the cache from the last recv'd snapshot.
+        ulong acks = Util.TryGetVOr(recv, "ack", ulong.MaxValue);
+        if (acks >= mCurTick) {
+            GD.PrintErr($"Server tick is < current tick ! {acks}<{mCurTick}");
+            return null;
+        }
+        UpdatePlayer(recv);
+        // Rollback code. We reinterpret all unacknowledged inputs with the new state received by
+        // the server.
+        var tmp = mInputs;
+        int nRm = 0;
+        foreach(var input in mPlayerInputList) {
+            if (input.id <= acks) {
+                nRm++;
+                // GD.Print($"Reconciling {input}");
+                mInputs = input;
+                SimulatePhysics((1F / 128F), true);
+            }
+        }
+        mPlayerInputList.RemoveRange(0, nRm);
+        mInputs = tmp;
+        // Inform the scene of our predicted state.
+        Snap result = SnapshotState();
+        // Lerp(GlobalTransform, mHead.GlobalTransform, mBody.GlobalTransform, factor);
+        return result;
+    }
+
+    public void Lerp(Transform wholeTo, Transform headTo, Transform bodyTo, float factor) {
+        Snap oldPlayerDat = mLastPredictedState;
+        Transform oldPosition = (Transform)oldPlayerDat["gt"];
+        GlobalTransform = oldPosition.InterpolateWith(wholeTo, factor);
+
+        Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
+        mHead.GlobalTransform = oldHeadPosition.InterpolateWith(headTo, factor);
+
+        Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
+        mHead.GlobalTransform = oldBodyPosition.InterpolateWith(bodyTo, factor);
+    }
+
+    public void ExtrapolateTo(Transform wholeTo, Transform headTo, Transform bodyTo) {
+        if (mIsRealPlayer) {
+            return;
+        }
+    }
+
+    public void UpdatePlayer(Snap recv) {
         GlobalTransform = Util.TryGetVOr<Transform>(recv, "gt", GlobalTransform);
         mVelocity = Util.TryGetVOr<Vector3>(recv, "vel", mVelocity);
         mGravityVec = Util.TryGetVOr<Vector3>(recv, "grav", mGravityVec);
@@ -727,24 +938,14 @@ Vertical velocity: {mVerticalVelocity}";
             {  "ts", OS.GetSystemTimeMsecs().ToString()},
             {"tick",                mCurTick.ToString()}
         };
-        mPlayerInputList.Add(mInputs);
-        mInputs.ResetMouse();
+        mPlayerInputList.Add(mInputs.SetId(mInputIdCounter++));
+        mInputs = mInputs.ResetMouse();
         mSceneRef.SendPlayerInput(send);
     }
 
     private void SendPlayerState() {
-        Snap state = new Snap() {
-            {  "gt",       GlobalTransform},
-            { "hgt", mHead.GlobalTransform},
-            { "bgt", mBody.GlobalTransform},
-            { "vel",             mVelocity},
-            { "ajp",             mAutoJump},
-            {"grav",           mGravityVec},
-            {"snap",                 mSnap},
-            {"vvel",     mVerticalVelocity},
-            {"wdir",              mWishDir},
-            {"tick",   mCurTick.ToString()}
-        };
+        Snap state = SnapshotState();
+        state["ack"] = mInputs.id;
         mSceneRef.SendPlayerState(mNetworkId, state);
     }
 }
