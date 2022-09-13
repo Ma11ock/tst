@@ -230,6 +230,7 @@ Snapshots/second: {mPacketUpdateRate}";
                         // Don't interpolate this player. Just give it its update.
                         newPlayers[player] =
                             pl.ClientPredict(playerDat, interpFactor, mGotPacketThisTick);
+                        mGotPacketThisTick = false;
                         continue;
                     }
 

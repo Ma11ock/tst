@@ -1,11 +1,13 @@
 using Godot;
 using System.Collections.Generic;
+using System;
 
 // Notes on Quake's movement code: It's coordinate system is different to that
 // of Godot's. In Quake Z is up/down, in Godot Z is forwards/backwards and Y is
 // up/down.
 
 using Snap = Godot.Collections.Dictionary;
+using DArray = Godot.Collections.Array;
 
 namespace Tst {
 
@@ -24,11 +26,11 @@ public struct Input {
     /// <summary>
     /// Change in mouse's X direction.
     /// </summary>
-    public float dx { get; private set; }
+    public DArray dx { get; private set; }
     /// <summary>
     /// Change in mouse's Y direction.
     /// </summary>
-    public float dy { get; private set; }
+    public DArray dy { get; private set; }
     /// <summary>
     /// If true, player has queued a jump : the jump key can be held down before hitting the ground
     /// to jump.
@@ -45,8 +47,8 @@ public struct Input {
     public Input(float strafe, float forwards) {
         this.strafe = strafe;
         this.forwards = forwards;
-        this.dx = 0F;
-        this.dy = 0F;
+        this.dx = new DArray();
+        this.dy = new DArray();
         this.jump = false;
         this.id = 0;
     }
@@ -62,6 +64,23 @@ public struct Input {
     public Input(float strafe, float forwards, float dx, float dy, bool jump) {
         this.strafe = strafe;
         this.forwards = forwards;
+        this.dx = new DArray() { dx };
+        this.dy = new DArray() { dy };
+        this.jump = jump;
+        this.id = 0;
+    }
+
+    /// <summary>
+    /// Create a new input. Full constructor, sets all members.
+    /// <param name="strafe"> Strafe value. </param>
+    /// <param name="strafe"> Forwards value. </param>
+    /// <param name="dx"> Mouse x value. </param>
+    /// <param name="dy"> Mouse y value. </param>
+    /// <param name="jump"> This frame's jump value. </param>
+    /// </summary>
+    public Input(float strafe, float forwards, DArray dx, DArray dy, bool jump) {
+        this.strafe = strafe;
+        this.forwards = forwards;
         this.dx = dx;
         this.dy = dy;
         this.jump = jump;
@@ -73,7 +92,7 @@ public struct Input {
     /// </summary>
     /// <returns> Create a string representation of all of <c>Input</c>'s members. </returns>
     public override string ToString() =>
-        $"strafe = {strafe}, forwards = {forwards}, dx = {dx}, dy = {dy}, jump = {jump}";
+        $"strafe = {strafe}, forwards = {forwards}, dx = {dx}, dy = {dy}, jump = {jump}, id = {id}";
 
     /// <summary>
     /// Create a new input. Sets the mouse values, all other values are unchanged.
@@ -82,14 +101,18 @@ public struct Input {
     /// <param name="dy"> Mouse y value. </param>
     public Input SetMouse(float dx, float dy) => new Input(this.strafe, this.forwards, dx, dy,
                                                            this.jump);
+
     /// <summary>
     /// Create a new input. Sets the mouse values to <see cref="dx"> + dx, and <see cref="dy"> + dy.
     /// Keep all remaining values the same.
     /// </summary>
     /// <param name="dx"> Mouse x value. </param>
     /// <param name="dy"> Mouse y value. </param>
+
+    /// TODO list of mouse movements.
     public Input DeltaMouse(float dx, float dy) => new Input(this.strafe, this.forwards,
-                                                             this.dx + dx, this.dy + dy, this.jump);
+                                                             new DArray(this.dx) { dx },
+                                                             new DArray(this.dy) { dy }, this.jump);
 
     /// <summary>
     /// Create a new input. Sets the mouse values to <see cref="dx"> + dx, and <see cref="dy"> + dy.
@@ -473,6 +496,7 @@ Vertical velocity: {mVerticalVelocity}";
         } else if (GetTree().IsNetworkServer()) {
             // Get inputs.
             NextInput();
+            MoveHead();
         }
         mWishDir = new Vector3(strafeInput, 0F, forwardInput)
                        .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
@@ -694,6 +718,14 @@ Vertical velocity: {mVerticalVelocity}";
         }
     }
 
+    public override void _ExitTree() {
+        base._ExitTree();
+
+        if (mDebugOverlay != null) {
+            mDebugOverlay.Remove(this);
+        }
+    }
+
     private Snap SnapshotState() => new Snap() {
         {  "gt",                    GlobalTransform},
         { "hgt",              mHead.GlobalTransform},
@@ -705,7 +737,8 @@ Vertical velocity: {mVerticalVelocity}";
         {"vvel",                  mVerticalVelocity},
         {"wdir",                           mWishDir},
         {  "ts", OS.GetSystemTimeMsecs().ToString()},
-        {"tick",                mCurTick.ToString()}
+        {"tick",                mCurTick.ToString()},
+        { "iid",              mInputs.id.ToString()}
     };
 
     public override void _PhysicsProcess(float delta) {
@@ -802,6 +835,21 @@ Vertical velocity: {mVerticalVelocity}";
         mVelocity = nextVelocity;
     }
 
+    private void MoveHead() {
+        for (int i = 0; (mInputs.dx != null) && (mInputs.dy != null) && (i < mInputs.dx.Count) &&
+                        (i < mInputs.dy.Count);
+             i++) {
+            float? x = mInputs.dx[i] as float ? ;
+            float? y = mInputs.dy[i] as float ? ;
+            // Validate input.
+            if ((x == null) || (y == null) || !Util.IsFinite(x.Value) || !Util.IsFinite(y.Value)) {
+                GD.PrintErr($"Invalid mouse input: ({x},{y}). Skipping.");
+                continue;
+            }
+            MoveHead(x.Value, y.Value);
+        }
+    }
+
     private void MoveHead(float dx, float dy) {
         mBody.RotateY(Mathf.Deg2Rad(dx));
         mHead.RotateX(Mathf.Deg2Rad(dy));
@@ -811,41 +859,6 @@ Vertical velocity: {mVerticalVelocity}";
         mBody.Transform = mBody.Transform.Orthonormalized();
         mHead.Transform = mHead.Transform.Orthonormalized();
         Transform = Transform.Orthonormalized();
-    }
-
-    ulong macks = 0;
-
-    private void NextInput() {
-        if (mPlayerInputQueue.Count < 1 || !GetTree().IsNetworkServer()) {
-            return;
-        }
-        Snap dat = mPlayerInputQueue.Dequeue();
-        macks = Util.TryGetVOr(dat, "tick", ulong.MaxValue);
-        float dx = Util.TryGetVOr<float>(dat, "dx", 0F);
-        float dy = Util.TryGetVOr<float>(dat, "dy", 0F);
-        float strafe = Util.TryGetVOr<float>(dat, "str", 0F);
-        float forward = Util.TryGetVOr<float>(dat, "for", 0F);
-        bool jump = Util.TryGetVOr<bool>(dat, "jmp", false);
-        bool autoJump = Util.TryGetVOr<bool>(dat, "ajp", false);
-
-        // Ensure all floats are valid values. Reject the input if so.
-        if (!Util.IsFinite(0)) {
-            GD.PrintErr($"Head rotation is not finite");
-            return;
-        } else if (!Util.IsFinite(strafe)) {
-            GD.PrintErr($"Strafe value is not finite");
-            return;
-        } else if (!Util.IsFinite(forward)) {
-            GD.PrintErr($"Forward movement value is not finite");
-            return;
-        }
-        // TODO make this tst from the snap in a better way and validate (probably as a
-        // constructor).
-
-        // Move.
-        mInputs = new Tst.Input(strafe, forward, dx, dy, jump);
-        mAutoJump = autoJump;
-        MoveHead(dx, dy);
     }
 
     public void PlayerInput(Snap dat) {
@@ -862,24 +875,23 @@ Vertical velocity: {mVerticalVelocity}";
         if (!fromServer) {
             return recv;
         }
+
         mLastPredictedState = SnapshotState();
         // TODO instead of current values, should be the cache from the last recv'd snapshot.
-        ulong acks = Util.TryGetVOr(recv, "ack", ulong.MaxValue);
-        if (acks >= mCurTick) {
-            GD.PrintErr($"Server tick is < current tick ! {acks}<{mCurTick}");
-            return null;
-        }
+        ulong acks = Util.TryGetVOr(recv, "iid", ulong.MaxValue);
         UpdatePlayer(recv);
-        // Rollback code. We reinterpret all unacknowledged inputs with the new state received by
-        // the server.
         var tmp = mInputs;
         int nRm = 0;
         foreach(var input in mPlayerInputList) {
-            if (input.id <= acks) {
-                nRm++;
-                // GD.Print($"Reconciling {input}");
+            // We rollback and reinterpret all unacknowledged inputs with the new state received by
+            // the server.
+            if (input.id > acks) {
                 mInputs = input;
+                MoveHead();
+                // TODO do not hardcode (1/128).
                 SimulatePhysics((1F / 128F), true);
+            } else {
+                nRm++;
             }
         }
         mPlayerInputList.RemoveRange(0, nRm);
@@ -908,6 +920,41 @@ Vertical velocity: {mVerticalVelocity}";
         }
     }
 
+    ulong macks = 0;
+
+    private void NextInput() {
+        if (mPlayerInputQueue.Count < 1 || !GetTree().IsNetworkServer()) {
+            return;
+        }
+        Snap dat = mPlayerInputQueue.Dequeue();
+        macks = Util.TryGetVOr(dat, "tick", ulong.MaxValue);
+        DArray dx = Util.TryGetR<DArray>(dat, "dx");
+        DArray dy = Util.TryGetR<DArray>(dat, "dy");
+        float strafe = Util.TryGetVOr<float>(dat, "str", 0F);
+        float forward = Util.TryGetVOr<float>(dat, "for", 0F);
+        bool jump = Util.TryGetVOr<bool>(dat, "jmp", false);
+        bool autoJump = Util.TryGetVOr<bool>(dat, "ajp", false);
+        ulong iid = Util.TryGetVOr(dat, "iid", ulong.MaxValue);
+
+        // Ensure all floats are valid values. Reject the input if so.
+        if (!Util.IsFinite(0)) {
+            GD.PrintErr($"Head rotation is not finite");
+            return;
+        } else if (!Util.IsFinite(strafe)) {
+            GD.PrintErr($"Strafe value is not finite");
+            return;
+        } else if (!Util.IsFinite(forward)) {
+            GD.PrintErr($"Forward movement value is not finite");
+            return;
+        }
+        // TODO make this tst from the snap in a better way and validate (probably as a
+        // constructor).
+
+        // Set the input.
+        mInputs = new Tst.Input(strafe, forward, dx, dy, jump).SetId(iid);
+        mAutoJump = autoJump;
+    }
+
     public void UpdatePlayer(Snap recv) {
         GlobalTransform = Util.TryGetVOr<Transform>(recv, "gt", GlobalTransform);
         mVelocity = Util.TryGetVOr<Vector3>(recv, "vel", mVelocity);
@@ -919,15 +966,8 @@ Vertical velocity: {mVerticalVelocity}";
         mBody.GlobalTransform = Util.TryGetVOr<Transform>(recv, "bgt", mBody.GlobalTransform);
     }
 
-    public override void _ExitTree() {
-        base._ExitTree();
-
-        if (mDebugOverlay != null) {
-            mDebugOverlay.Remove(this);
-        }
-    }
-
     private void SendInputPacket() {
+        ulong iid = ++mInputIdCounter;
         Snap send = new Snap() {
             {  "dx",                         mInputs.dx},
             {  "dy",                         mInputs.dy},
@@ -935,17 +975,14 @@ Vertical velocity: {mVerticalVelocity}";
             { "for",                   mInputs.forwards},
             { "jmp",                       mInputs.jump},
             { "ajp",                          mAutoJump},
+            { "iid",                     iid.ToString()},
             {  "ts", OS.GetSystemTimeMsecs().ToString()},
             {"tick",                mCurTick.ToString()}
         };
-        mPlayerInputList.Add(mInputs.SetId(mInputIdCounter++));
+        mPlayerInputList.Add(mInputs.SetId(iid));
         mInputs = mInputs.ResetMouse();
         mSceneRef.SendPlayerInput(send);
     }
 
-    private void SendPlayerState() {
-        Snap state = SnapshotState();
-        state["ack"] = mInputs.id;
-        mSceneRef.SendPlayerState(mNetworkId, state);
-    }
+    private void SendPlayerState() => mSceneRef.SendPlayerState(mNetworkId, SnapshotState());
 }
