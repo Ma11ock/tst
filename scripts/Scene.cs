@@ -154,6 +154,8 @@ Snapshots/second: {mPacketUpdateRate}";
         base._Process(delta);
     }
 
+    public float mInterpFactor { get; private set; } = 0F;
+
     private void PhysicsProcessClient(float delta) {
         ulong renderTime = OS.GetSystemTimeMsecs() - mInterpolationConstant;
         if (mWorldCache.Count > 1) {
@@ -168,12 +170,12 @@ Snapshots/second: {mPacketUpdateRate}";
                 ulong mostRecentTs = Util.TryGetVOr(mWorldCache[1], "ts", ulong.MaxValue);
                 ulong futureTs = Util.TryGetVOr(mWorldCache[2], "ts", ulong.MaxValue);
                 // Determine how much time has passed since the old state and the future state.
-                float interpFactor =
+                mInterpFactor =
                     (float)(renderTime - mostRecentTs) / (float)(futureTs - mostRecentTs);
                 // Ensure the factor is valid and wont mess up Lerp().
                 const float MIN_FACTOR = 0.01F;
-                interpFactor = Util.IsFinite(interpFactor) ? interpFactor : MIN_FACTOR;
-                interpFactor = Mathf.Clamp(interpFactor, MIN_FACTOR, 1F);
+                mInterpFactor = Util.IsFinite(mInterpFactor) ? mInterpFactor : MIN_FACTOR;
+                mInterpFactor = Mathf.Clamp(mInterpFactor, MIN_FACTOR, 1F);
 
                 Snap oldPlayers = (Snap)mWorldCache[1]["plys"];
                 Snap newPlayers = (Snap)mWorldCache[2]["plys"];
@@ -226,10 +228,9 @@ Snapshots/second: {mPacketUpdateRate}";
                         continue;
                     }
 
-                    if (pl.mIsRealPlayer) {
+                    if (pl.mIsRealPlayer && mGotPacketThisTick) {
                         // Don't interpolate this player. Just give it its update.
-                        newPlayers[player] =
-                            pl.ClientPredict(playerDat, interpFactor, mGotPacketThisTick);
+                        pl.ClientPredict(playerDat);
                         mGotPacketThisTick = false;
                         continue;
                     }
@@ -239,16 +240,16 @@ Snapshots/second: {mPacketUpdateRate}";
                         Transform oldPosition = (Transform)oldPlayerDat["gt"];
                         Transform futurePosition = (Transform)playerDat["gt"];
                         Transform newTransform =
-                            oldPosition.InterpolateWith(futurePosition, interpFactor);
+                            oldPosition.InterpolateWith(futurePosition, mInterpFactor);
                         playerDat["gt"] = newTransform;
                         Transform oldHeadPosition = (Transform)oldPlayerDat["hgt"];
                         Transform futureHeadPosition = (Transform)playerDat["hgt"];
                         Transform newHeadTransform =
-                            oldHeadPosition.InterpolateWith(futureHeadPosition, interpFactor);
+                            oldHeadPosition.InterpolateWith(futureHeadPosition, mInterpFactor);
                         Transform oldBodyPosition = (Transform)oldPlayerDat["bgt"];
                         Transform futureBodyPosition = (Transform)playerDat["bgt"];
                         Transform newBodyTransform =
-                            oldBodyPosition.InterpolateWith(futureBodyPosition, interpFactor);
+                            oldBodyPosition.InterpolateWith(futureBodyPosition, mInterpFactor);
                         playerDat["gt"] = newTransform;
                         playerDat["hgt"] = newHeadTransform;
                         playerDat["bgt"] = newBodyTransform;

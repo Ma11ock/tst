@@ -260,7 +260,7 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// Client's mouse sensitivity.
     /// </summary>
     [Export]
-    private float mMouseSensitivity = 0.09F;
+    private float mMouseSensitivity = 0.2F;
     /// <summary>
     /// Max speed of the player on the ground.
     /// </summary>
@@ -449,6 +449,7 @@ Vertical velocity: {mVerticalVelocity}";
         if (!mIsRealPlayer) {
             return;
         }
+
         //  Find the current interpolated transform of the target.
         Transform tr = mHead.GetGlobalTransformInterpolated();
 
@@ -868,18 +869,15 @@ Vertical velocity: {mVerticalVelocity}";
         mPlayerInputQueue.Enqueue(dat);
     }
 
-    public Snap ClientPredict(Snap recv, float factor, bool fromServer) {
+    public void ClientPredict(Snap recv) {
+        return;
         if (!mIsRealPlayer) {
-            return null;
+            return;
         }
-        if (!fromServer) {
-            return recv;
-        }
-
+        // Our current client-predicted state is used to interpolate to the new one.
         mLastPredictedState = SnapshotState();
-        // TODO instead of current values, should be the cache from the last recv'd snapshot.
-        ulong acks = Util.TryGetVOr(recv, "iid", ulong.MaxValue);
         UpdatePlayer(recv);
+        ulong acks = Util.TryGetVOr(recv, "iid", ulong.MaxValue);
         var tmp = mInputs;
         int nRm = 0;
         foreach(var input in mPlayerInputList) {
@@ -896,10 +894,6 @@ Vertical velocity: {mVerticalVelocity}";
         }
         mPlayerInputList.RemoveRange(0, nRm);
         mInputs = tmp;
-        // Inform the scene of our predicted state.
-        Snap result = SnapshotState();
-        // Lerp(GlobalTransform, mHead.GlobalTransform, mBody.GlobalTransform, factor);
-        return result;
     }
 
     public void Lerp(Transform wholeTo, Transform headTo, Transform bodyTo, float factor) {
