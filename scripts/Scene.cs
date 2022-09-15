@@ -157,6 +157,7 @@ Snapshots/second: {mPacketUpdateRate}";
     public float mInterpFactor { get; private set; } = 0F;
 
     private void PhysicsProcessClient(float delta) {
+        return;
         ulong renderTime = OS.GetSystemTimeMsecs() - mInterpolationConstant;
         if (mWorldCache.Count > 1) {
             while (mWorldCache.Count > 2 &&

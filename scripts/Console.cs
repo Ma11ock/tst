@@ -2,11 +2,12 @@ using Godot;
 using System;
 using System.Collections.Generic;
 
-using Cmd = System.Func<string[], Console, int>;
 
 public class Console : Control {
     private Godot.LineEdit mInput = null;
     private Godot.TextEdit mOutput = null;
+
+    private Global mGlobals = null;
 
     public const int DEFAULT_CONSOLE_LIMIT_MAX = 4096;
 
@@ -25,23 +26,10 @@ public class Console : Control {
         }
     }
 
-    public static List<(string, Cmd)> Commands {
-        get; private set;
-    } = new List<(string, Cmd)> { ("fps_max", FpsMax),
-                                  ("net_graph", NetGraph),
-                                  ("god", God),
-                                  ("?", GetLastResult),
-                                  ("console_max_chars", ConsoleMaxChars),
-                                  ("clear", Clear),
-                                  ("say", Say) };
-
-    public static void AddCmds(string name, Cmd command) => AddCmds((name, command));
-
-    public static void AddCmds((string, Cmd)command) => Commands.Add(command);
-
     public override void _Ready() {
         mInput = GetNode<Godot.LineEdit>("input");
         mOutput = GetNode<Godot.TextEdit>("output");
+        mGlobals = GetNode<Global>("/root/Global");
     }
 
     public void ToggleVisible() {
@@ -154,42 +142,13 @@ public class Console : Control {
         return LastResult;
     }
 
-    private void RunCmd(string input) {
-        // Chop up input into a function call and an argument vector.
-        char[] delims = {
-            '\r',
-            ' ',
-            '\n',
-        };
-        string[] args = input.Split(delims, StringSplitOptions.RemoveEmptyEntries);
-
-        if (args.Length == 0) {
-            return;
-        }
-        string call = args[0];
-
-        foreach((string, Cmd)command in Commands) {
-            if (command.Item1 == call) {
-                LastResult = command.Item2(args, this);
-                // Append newline if the command did not.
-                if (!mOutput.Text.EndsWith("\n")) {
-                    mOutput.Text += '\n';
-                }
-
-                goto print_return_value;
-            }
-        }
-
-        LastResult = int.MinValue;
-        mOutput.Text += $"Error: \"{call}\" is not a recognized command.\n";
-print_return_value:
-        char terminalChar = '$';  // TODO make '#' if client has admin privs.
-        mInput.PlaceholderText = $"{LastResult} {terminalChar}";
-    }
-
     public void _OnInputTextEntered(string input) {
         mInput.Clear();
-        RunCmd(input);
+        try {
+            mOutput.Text += $"{mGlobals.mCollection.RunOrSet(input).ToString()}\n";
+        } catch(Exception e) {
+            mOutput.Text += $"Could not change the var because {e}\n";
+        }
     }
 
     public void _OnOutputTextChanged() {
