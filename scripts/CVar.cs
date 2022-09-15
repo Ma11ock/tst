@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 
 namespace Tst {
-using Cmd = System.Func<string[], object>;
 
 public abstract class CVar {
     public abstract object Get();
@@ -124,7 +123,7 @@ public class CFunc : CVar {
 // If passed with no args, just print the value.
 // If passed with args, set the value or perform some action.
 
-class CVarCollection {
+public class CVarCollection {
     public class NotFunction : Exception {
         public NotFunction(string msg) : base(msg) {
         }

@@ -2,7 +2,6 @@ using Godot;
 using System;
 using System.Collections.Generic;
 
-
 public class Console : Control {
     private Godot.LineEdit mInput = null;
     private Godot.TextEdit mOutput = null;

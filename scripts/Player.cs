@@ -164,7 +164,7 @@ public struct Input {
 /// </item>
 /// </list>
 /// </summary>
-public class Player : KinematicBody, Tst.Debuggable {
+public class Player : Tst.QuakeMover, Tst.Debuggable {
     // Children nodes.
     /// <summary>
     /// Body reference.
@@ -251,118 +251,10 @@ public class Player : KinematicBody, Tst.Debuggable {
     /// </summary>
     private Scene mSceneRef = null;
 
-    // Quake physics objects.
-    /// <summary>
-    /// Gravity acceleration.
-    /// </summary>
-    static private float gravity = (float)ProjectSettings.GetSetting("physics/3d/default_gravity");
-    /// <summary>
-    /// Client's mouse sensitivity.
-    /// </summary>
-    [Export]
-    private float mMouseSensitivity = 0.2F;
-    /// <summary>
-    /// Max speed of the player on the ground.
-    /// </summary>
-    [Export]
-    private float mMaxSpeed = 10F;
-    /// <summary>
-    /// Max speed of the player in the air.
-    /// </summary>
-    [Export]
-    private float mMaxAirSpeed = 0.6F;
-    /// <summary>
-    /// Acceleration when moving.
-    /// </summary>
-    [Export]
-    private float mAcceleration = 60F;
-    /// <summary>
-    /// Ground friction.
-    /// </summary>
-    [Export]
-    private float mFriction = 6F;
-    /// <summary>
-    /// Y velocity when jumping.
-    /// </summary>
-    [Export]
-    private float mJumpImpulse = 8F;
-    /// <summary>
-    /// Terminal velocity, fastest a player is able to fall.
-    /// </summary>
-    private float mTerminalVelocity = gravity * -5F;
-    /// <summary>
-    /// Snap vector, used for stairs and some collision physics. Needed for MoveAndSlideWithSnap(),
-    /// which enables going down slopes without falling.
-    /// </summary>
-    private Vector3 mSnap = Vector3.Zero;
-
     /// <summary>
     /// The n'th tick the game server is on. Used only by the server and the client's player.
     /// </summary>
     public ulong mCurTick = 0;
-
-    private Vector3 mVelocity = Vector3.Zero;
-    private Vector3 mWishDir = Vector3.Zero;
-    private Vector3 mGravityVec = Vector3.Zero;
-    private float mVerticalVelocity = 0F;  // Vertical component of velocity.
-
-    /// <summary>
-    /// If true the player is currently jumping.
-    /// </summary>
-    private bool mIsJump = false;
-    /// <summary>
-    /// If true, player has queued a jump : the jump key can be
-    /// held down before hitting the ground to jump.
-    /// </summary>
-    private bool mAutoJump = false;
-
-    // For stair snapping.
-    /// <summary>
-    /// Linear interpolation constant for stair stepping.
-    /// </summary>
-    public const float STAIRS_FEELING_COEFFICIENT = 2.5F;
-    /// <summary>
-    /// Constant for wall collisions in stairs code.
-    /// </summary>
-    public const float WALL_MARGIN = 0.001F;
-    /// <summary>
-    /// Constant for checking step height.
-    /// </summary>
-    public static readonly Vector3 STEP_HEIGHT_DEFAULT = new Vector3(0F, 0.6F, 0F);
-    /// <summary>
-    /// Constant for checking step angles.
-    /// </summary>
-    public const float STEP_MAX_SLOPE_DEGREE = 0F;
-    /// <summary>
-    /// Times to check for steps.
-    /// </summary>
-    public const int STEP_CHECK_COUNT = 2;
-    /// <summary>
-    /// ?
-    /// </summary>
-    private Vector3 mStepCheckHeight = STEP_HEIGHT_DEFAULT / STEP_CHECK_COUNT;
-    /// <summary>
-    ///
-    /// </summary>
-    private Vector3 mHeadOffset = Vector3.Zero;
-    /// <summary>
-    /// Euler angle in Y direction for interpolation.
-    /// </summary>
-    private float mBodyEulerY = 0F;
-
-    // Camera interpolation on stairs.
-    /// <summary>
-    /// Camera target position for stairstep interpolation.
-    /// </summary>
-    private Vector3 mCameraTargetPos = Vector3.Zero;
-    /// <summary>
-    /// TODO
-    /// </summary>
-    private float mCameraCoefficient = 1.0F;
-    /// <summary>
-    /// Time spent in air for interpolation.
-    /// </summary>
-    private float mTimeInAir = 0F;
 
     /// <summary>
     /// ID for debugging system.
@@ -440,7 +332,8 @@ Vertical velocity: {mVerticalVelocity}";
             float dx = -mouseEvent.Relative.x * mMouseSensitivity;
             float dy = -mouseEvent.Relative.y * mMouseSensitivity;
             mInputs = mInputs.DeltaMouse(dx, dy);
-            MoveHead(dx, dy);
+            MoveHead(dx, dy, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
+            // MoveHead(dx, dy);
         }
     }
 
@@ -482,241 +375,6 @@ Vertical velocity: {mVerticalVelocity}";
     }
 
     private void SimulatePhysics(float delta, bool dummyInput = false) {
-        bool isStep = false;
-
-        float forwardInput = mInputs.forwards;
-        float strafeInput = mInputs.strafe;
-        if (mIsRealPlayer && !Global.InputCaptured && !dummyInput) {
-            forwardInput =
-                Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
-            strafeInput =
-                Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
-
-            mInputs = mInputs.SetDirs(strafeInput, forwardInput).SetJump(QueueJump());
-            SendInputPacket();
-        } else if (GetTree().IsNetworkServer()) {
-            // Get inputs.
-            NextInput();
-            MoveHead();
-        }
-        mWishDir = new Vector3(strafeInput, 0F, forwardInput)
-                       .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
-                       .Normalized();
-
-        if (IsOnFloor()) {
-            if (mIsJump) {
-                // If we're on the ground but mIsJump is still true, this means we've just
-                // landed.
-                mSnap = Vector3.Zero;  // Set snapping to zero so we can get off the ground.
-                mVerticalVelocity = mJumpImpulse;  // Jump.
-
-                MoveAir(mVelocity, delta);  // Mimic Quake's way of treating first frame after
-                // landing as still in the air.
-
-                mIsJump = false;  // We have jumped, the player needs to press jump key again.
-                mGravityVec += Vector3.Down * gravity * delta;
-            } else {
-                // Player is on the ground. Move normally, apply friction.
-                mVerticalVelocity = 0F;
-                mSnap = -GetFloorNormal();
-                MoveGround(mVelocity, delta);
-                mGravityVec = Vector3.Zero;
-            }
-        } else {
-            // We're in the air. Do not apply friction
-            mSnap = Vector3.Down;
-            mVerticalVelocity -= (mVerticalVelocity >= mTerminalVelocity) ? gravity * delta : 0F;
-            MoveAir(mVelocity, delta);
-            mGravityVec += Vector3.Down * gravity * delta;
-        }
-
-        if (IsOnCeiling()) {
-            mVerticalVelocity = 0F;
-        }
-
-        // Stair stepping.
-        if (mGravityVec.y >= 0) {
-            for (int i = 0; i < STEP_CHECK_COUNT; i++) {
-                PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
-
-                Vector3 stepHeight = STEP_HEIGHT_DEFAULT - i * mStepCheckHeight;
-                Transform transform3d = GlobalTransform;
-                Vector3 motion = stepHeight;
-                bool isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                     false, testMotionResult);
-
-                if (testMotionResult.CollisionNormal.y < 0) {
-                    continue;
-                }
-
-                if (!isPlayerCollided) {
-                    transform3d.origin += stepHeight;
-                    motion = mVelocity * delta;
-                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                    false, testMotionResult);
-
-                    if (!isPlayerCollided) {
-                        transform3d.origin += motion;
-                        motion = -stepHeight;
-                        isPlayerCollided = PhysicsServer.BodyTestMotion(
-                            GetRid(), transform3d, motion, false, testMotionResult);
-                        if (isPlayerCollided) {
-                            if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
-                                Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
-                                mHeadOffset = -testMotionResult.MotionRemainder;
-                                isStep = true;
-                                GlobalTransform = Util.ChangeTFormOrigin(
-                                    GlobalTransform,
-                                    GlobalTransform.origin + -testMotionResult.MotionRemainder);
-                                break;
-                            }
-                        }
-                    } else {
-                        Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
-
-                        transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
-                        motion = (mVelocity * delta).Slide(wallCollisionNormal);
-                        isPlayerCollided = PhysicsServer.BodyTestMotion(
-                            GetRid(), transform3d, motion, false, testMotionResult);
-
-                        if (!isPlayerCollided) {
-                            transform3d.origin += motion;
-                            motion = -stepHeight;
-
-                            isPlayerCollided = PhysicsServer.BodyTestMotion(
-                                GetRid(), transform3d, motion, false, testMotionResult);
-
-                            if (isPlayerCollided &&
-                                testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
-                                    Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
-                                mHeadOffset = -testMotionResult.MotionRemainder;
-                                isStep = true;
-                                GlobalTransform = Util.ChangeTFormOrigin(
-                                    GlobalTransform,
-                                    GlobalTransform.origin + -testMotionResult.MotionRemainder);
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
-                    transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
-                    motion = stepHeight;
-                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                    false, testMotionResult);
-
-                    if (!isPlayerCollided) {
-                        transform3d.origin += stepHeight;
-                        motion = (mVelocity * delta).Slide(wallCollisionNormal);
-                        isPlayerCollided = PhysicsServer.BodyTestMotion(
-                            GetRid(), transform3d, motion, false, testMotionResult);
-
-                        if (!isPlayerCollided) {
-                            transform3d.origin += motion;
-                            motion = -stepHeight;
-                            isPlayerCollided = PhysicsServer.BodyTestMotion(
-                                GetRid(), transform3d, motion, false, testMotionResult);
-
-                            if (isPlayerCollided) {
-                                if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
-                                    Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
-                                    mHeadOffset = -testMotionResult.MotionRemainder;
-                                    isStep = true;
-                                    GlobalTransform = Util.ChangeTFormOrigin(
-                                        GlobalTransform,
-                                        GlobalTransform.origin + -testMotionResult.MotionRemainder);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        bool isFalling = false;
-
-        if (!isStep && IsOnFloor()) {
-            PhysicsTestMotionResult testMotionResult = new PhysicsTestMotionResult();
-
-            Vector3 stepHeight = STEP_HEIGHT_DEFAULT;
-            Transform transform3d = GlobalTransform;
-
-            Vector3 motion = mVelocity * delta;
-            bool isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                 false, testMotionResult);
-
-            if (!isPlayerCollided) {
-                transform3d.origin += motion;
-                motion = -stepHeight;
-                isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                false, testMotionResult);
-                if (isPlayerCollided) {
-                    if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
-                        Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
-                        mHeadOffset = testMotionResult.Motion;
-                        isStep = true;
-                        GlobalTransform = Util.ChangeTFormOrigin(
-                            GlobalTransform,
-                            GlobalTransform.origin + testMotionResult.MotionRemainder);
-                    }
-                } else {
-                    isFalling = true;
-                }
-
-            } else {
-                if (testMotionResult.CollisionNormal.y == 0) {
-                    Vector3 wallCollisionNormal = testMotionResult.CollisionNormal;
-                    transform3d.origin += testMotionResult.CollisionNormal * WALL_MARGIN;
-                    motion = (mVelocity * delta).Slide(wallCollisionNormal);
-                    isPlayerCollided = PhysicsServer.BodyTestMotion(GetRid(), transform3d, motion,
-                                                                    false, testMotionResult);
-                    if (!isPlayerCollided) {
-                        transform3d.origin += motion;
-                        motion = -stepHeight;
-                        isPlayerCollided = PhysicsServer.BodyTestMotion(
-                            GetRid(), transform3d, motion, false, testMotionResult);
-                        if (isPlayerCollided) {
-                            if (testMotionResult.CollisionNormal.AngleTo(Vector3.Up) <=
-                                Mathf.Deg2Rad(STEP_MAX_SLOPE_DEGREE)) {
-                                mHeadOffset = testMotionResult.Motion;
-                                isStep = true;
-                                GlobalTransform = Util.ChangeTFormOrigin(
-                                    GlobalTransform,
-                                    GlobalTransform.origin + testMotionResult.MotionRemainder);
-                            }
-                        } else {
-                            isFalling = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!isStep) {
-            mHeadOffset = mHeadOffset.LinearInterpolate(
-                Vector3.Zero, delta * mVelocity.Length() * STAIRS_FEELING_COEFFICIENT);
-        }
-
-        if (isFalling) {
-            mSnap = Vector3.Zero;
-        }
-        mVelocity =
-            MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4, Mathf.Deg2Rad(46), false);
-
-        if (mIsRealPlayer) {
-            // Interpolate playermovement for smooth.
-            mMovementTween.InterpolateProperty(
-                this, "global_transform", GlobalTransform,
-                new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
-            mMovementTween.Start();
-        } else if (GetTree().IsNetworkServer()) {
-            SendPlayerState();
-        }
-
-        if (mInputs.jump) {
-            mIsJump = true;
-        }
     }
 
     public override void _ExitTree() {
@@ -745,53 +403,41 @@ Vertical velocity: {mVerticalVelocity}";
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
         ++mCurTick;
-        SimulatePhysics(delta);
-    }
 
-    // This is were we calculate the speed to add to current velocity
-    private Vector3 Accelerate(Vector3 wishDir, Vector3 inputVelocity, float acceleration,
-                               float maxSpeed, float delta) {
-        // Current speed is calculated by projecting our velocity onto wishdir.
-        // We can thus manipulate our wishdir to trick the engine into thinking we're going slower
-        // than we actually are, allowing us to accelerate further.
-        float currentSpeed = inputVelocity.Dot(wishDir);
+        float forwardInput = mInputs.forwards;
+        float strafeInput = mInputs.strafe;
+        if (mIsRealPlayer && !Global.InputCaptured) {
+            forwardInput =
+                Input.GetActionStrength("move_backward") - Input.GetActionStrength("move_forward");
+            strafeInput =
+                Input.GetActionStrength("move_right") - Input.GetActionStrength("move_left");
 
-        // Next, we calculate the speed to be added for the next frame.
-        // If our current speed is low enough, we will add the max acceleration.
-        // If we're going too fast, our acceleration will be reduced (until it eventually hits 0,
-        // where we don't add any more speed).
-        float addSpeed = Mathf.Clamp(maxSpeed - currentSpeed, 0F, acceleration * delta);
-
-        return inputVelocity + wishDir * addSpeed;
-    }
-
-    // Scale down horizontal velocity.
-    private Vector3 Friction(Vector3 inputVelocity, float delta) {
-        float speed = inputVelocity.Length();
-        if (speed < 0.1F) {
-            return new Vector3(0F, inputVelocity.y, 0F);
+            mInputs = mInputs.SetDirs(strafeInput, forwardInput).SetJump(QueueJump());
+            SendInputPacket();
+        } else if (GetTree().IsNetworkServer()) {
+            // Get inputs.
+            NextInput();
+            MoveHead();
         }
+        mWishDir = new Vector3(strafeInput, 0F, forwardInput)
+                       .Rotated(Vector3.Up, mBody.GlobalTransform.basis.GetEuler().y)
+                       .Normalized();
+        Simulate(delta);
 
-        float control = speed;  // speed < 5F ? 5F : speed;
-        float drop = control * mFriction * delta;
-
-        float newSpeed = speed - drop;
-        if (newSpeed < 0F) {
-            newSpeed = 0F;
+        // Interpolate playermovement for smooth.
+        mMovementTween.InterpolateProperty(
+            this, "global_transform", GlobalTransform,
+            new Transform(GlobalTransform.basis, GlobalTransform.origin), 0.1F);
+        mMovementTween.Start();
+        if (mIsRealPlayer && mInputs.jump) {
+            mIsJump = true;
+        } else if (GetTree().IsNetworkServer()) {
+            SendPlayerState();
         }
-
-        newSpeed /= speed;
-
-        Vector3 scaledVelocity = inputVelocity * newSpeed;
-        if (scaledVelocity.Length() < (mMaxSpeed / 100F)) {
-            scaledVelocity = Vector3.Zero;
-        }
-
-        return scaledVelocity;
     }
 
     // Set wish_jump depending on player input.
-    private bool QueueJump() {
+    public override bool QueueJump() {
         if (!mIsRealPlayer) {
             return mInputs.jump;
         }
@@ -809,33 +455,6 @@ Vertical velocity: {mVerticalVelocity}";
         return false;
     }
 
-    // Apply friction, then accelerate.
-    private void MoveGround(Vector3 velocity, float delta) {
-        // We first work on only on the horizontal components of our current velocity.
-        Vector3 nextVelocity = Vector3.Zero;
-        nextVelocity.x = velocity.x;
-        nextVelocity.z = velocity.z;
-
-        nextVelocity = Friction(nextVelocity, delta);
-        nextVelocity = Accelerate(mWishDir, nextVelocity, mAcceleration, mMaxSpeed, delta);
-
-        // Then get back our vertical component, and move the player.
-        nextVelocity.y = mVerticalVelocity;
-        mVelocity = nextVelocity;
-    }
-
-    // Accelerate without applying friction (with a lower allowed max_speed).
-    private void MoveAir(Vector3 velocity, float delta) {
-        // We first work on only on the horizontal components of our current velocity.
-        Vector3 nextVelocity = Vector3.Zero;
-        nextVelocity.x = velocity.x;
-        nextVelocity.z = velocity.z;
-        nextVelocity = Accelerate(mWishDir, nextVelocity, mAcceleration, mMaxAirSpeed, delta);
-
-        nextVelocity.y = mVerticalVelocity;
-        mVelocity = nextVelocity;
-    }
-
     private void MoveHead() {
         for (int i = 0; (mInputs.dx != null) && (mInputs.dy != null) && (i < mInputs.dx.Count) &&
                         (i < mInputs.dy.Count);
@@ -847,11 +466,11 @@ Vertical velocity: {mVerticalVelocity}";
                 GD.PrintErr($"Invalid mouse input: ({x},{y}). Skipping.");
                 continue;
             }
-            MoveHead(x.Value, y.Value);
+            MoveHead(x.Value, y.Value, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
         }
     }
 
-    private void MoveHead(float dx, float dy) {
+    public override void MoveHead(float dx, float dy, float minXRotRad, float maxXRotRad) {
         mBody.RotateY(Mathf.Deg2Rad(dx));
         mHead.RotateX(Mathf.Deg2Rad(dy));
         float newRotX = Mathf.Clamp(mHead.Rotation.x, Mathf.Deg2Rad(-89), Mathf.Deg2Rad(89));
