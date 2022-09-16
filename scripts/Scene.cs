@@ -116,6 +116,7 @@ Snapshots/second: {mPacketUpdateRate}";
     public override void _Ready() {
         base._Ready();
 
+        GD.Print("Scene loaded!!!!");
         mPreloads = (Godot.Node)((GDScript)GD.Load("res://scripts/Preloads.gd")).New();
         mPlayer = (PackedScene)mPreloads.Get("player");
         mDebugOverlay = MkInstance<DebugOverlay>("debug_overlay");
@@ -435,11 +436,9 @@ Snapshots/second: {mPacketUpdateRate}";
     public bool IsDebugOverlayVisible() => mDebugOverlay.Visible;
 
     private T MkInstance<T>(string name)
-        where T : Godot.Node {
-        return (T)((PackedScene)mPreloads.Get(name)).Instance();
-    }
+        where T : Godot.Node => (T)((PackedScene) mPreloads.Get(name)).Instance();
 
-    public override void _Input(InputEvent @event) {
+  public override void _Input(InputEvent @event) {
         base._Input(@event);
 
         if (@event.IsActionPressed("menu")) {

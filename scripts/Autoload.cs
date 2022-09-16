@@ -5,7 +5,7 @@ using Tommy;
 using System.Runtime;
 
 class Autoload : Node {
-    private Network mNetwork = null;
+    private Global mGlobals = null;
 
     private enum SCSettings {
         None,  // None specified.
@@ -35,8 +35,8 @@ class Autoload : Node {
 
     public override void _Ready() {
         base._Ready();
-        mNetwork = GetNode<Network>("/root/Network");
         GD.Print("Initializing game...");
+        mGlobals = GetNode<Global>("/root/Global");
 
         // Get global config.
         if (OS.HasFeature("editor")) {
@@ -49,8 +49,8 @@ class Autoload : Node {
 
         // Parse cmd args.
         string[] args = OS.GetCmdlineArgs();
-        string host = mNetwork.mIpAddress;
-        int port = Network.DEFAULT_PORT;
+        string host = NetworkManager.DEFAULT_IP;
+        int port = NetworkManager.DEFAULT_PORT;
         string nextArg = "";
         SCSettings settings = SCSettings.None;
         string errstr;
@@ -93,12 +93,15 @@ class Autoload : Node {
             }
         }
 
+        ServerManager server = null;
+        ClientManager client = null;
         switch (settings) {
         case SCSettings.None:
             // Turn this Godot instance into a server and make a client.
             GD.Print($"Starting server on port {port}...");
-            port = mNetwork.CreateServer(0);
-            GD.Print($"Started server on port {port}.");
+            server = mGlobals.MkInstance<ServerManager>("server_manager");
+            GetTree().Root.CallDeferred("add_child", server);
+            server.mPort = port;
             string[] clientArgs = new string[] { "--mk-client", port.ToString() };
             string exe = "Tst";
             if (OS.IsDebugBuild()) {
@@ -108,13 +111,17 @@ class Autoload : Node {
             break;
         case SCSettings.Server:
             GD.Print($"Starting server on port {port}...");
-            port = mNetwork.CreateServer(port);
-            GD.Print($"Started server on port {port}.");
+            server = mGlobals.MkInstance<ServerManager>("server_manager");
+            GetTree().Root.CallDeferred("add_child", server);
+            server.mPort = port;
             break;
         case SCSettings.Client:
             GD.Print($"Starting client on {host}:{port}.");
-            mNetwork.JoinServer(mNetwork.mIpAddress, port);
-            break;
+            client = mGlobals.MkInstance<ClientManager>("client_manager");
+            GetTree().Root.CallDeferred("add_child", client);
+            client.mPort = port;
+            client.mAddress = host;
+                break;
         }
     }
 
