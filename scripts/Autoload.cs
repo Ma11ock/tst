@@ -37,6 +37,7 @@ class Autoload : Node {
         base._Ready();
         GD.Print("Initializing game...");
         mGlobals = GetNode<Global>("/root/Global");
+        ClientMaster.sGlobals = mGlobals;
 
         // Get global config.
         if (OS.HasFeature("editor")) {
@@ -116,12 +117,11 @@ class Autoload : Node {
             server.mPort = port;
             break;
         case SCSettings.Client:
-            GD.Print($"Starting client on {host}:{port}.");
             client = mGlobals.MkInstance<ClientManager>("client_manager");
             GetTree().Root.CallDeferred("add_child", client);
             client.mPort = port;
             client.mAddress = host;
-                break;
+            break;
         }
     }
 

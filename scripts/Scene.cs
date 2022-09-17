@@ -26,11 +26,6 @@ public class Scene : Spatial, Tst.Debuggable {
     private Snap mPlayerStates = null;
 
     /// <summary>
-    /// Reference to preloaded assets.
-    /// </summary>
-    private Godot.Node mPreloads = null;
-
-    /// <summary>
     /// Global debug console.
     /// </summary>
     private Console mDebugConsole = null;
@@ -116,16 +111,16 @@ Snapshots/second: {mPacketUpdateRate}";
     public override void _Ready() {
         base._Ready();
 
-        GD.Print("Scene loaded!!!!");
-        mPreloads = (Godot.Node)((GDScript)GD.Load("res://scripts/Preloads.gd")).New();
-        mPlayer = (PackedScene)mPreloads.Get("player");
-        mDebugOverlay = MkInstance<DebugOverlay>("debug_overlay");
+        mGlobal = GetNode<Global>("/root/Global");
+
+        mPlayer = (PackedScene)mGlobal.mPreloads.Get("player");
+        mDebugOverlay = mGlobal.MkInstance<DebugOverlay>("debug_overlay");
         mDebugOverlay.Name = DEBUG_OVERLAY_NAME;
         AddChild(mDebugOverlay);
 
         mDebugOverlay.Add<Godot.Label>(this);
 
-        mDebugConsole = MkInstance<Console>("console");
+        mDebugConsole = mGlobal.MkInstance<Console>("console");
         mDebugConsole.Name = "_test_debug_console";
         mDebugConsole.Visible = false;
         AddChild(mDebugConsole);
@@ -133,8 +128,6 @@ Snapshots/second: {mPacketUpdateRate}";
         // Set up network connection stuff.
         GetTree().Connect("network_peer_connected", this, "_PlayerConnected");
         GetTree().Connect("network_peer_disconnected", this, "_PlayerDisconnected");
-
-        mGlobal = GetNode<Global>("/root/Global");
 
         mGlobal.Connect("InstancePlayer", this, "_InstancePlayer");
 
@@ -435,9 +428,6 @@ Snapshots/second: {mPacketUpdateRate}";
 
     public bool IsDebugOverlayVisible() => mDebugOverlay.Visible;
 
-    private T MkInstance<T>(string name)
-        where T : Godot.Node => (T)((PackedScene) mPreloads.Get(name)).Instance();
-
   public override void _Input(InputEvent @event) {
         base._Input(@event);
 
@@ -493,7 +483,6 @@ Snapshots/second: {mPacketUpdateRate}";
             // Set the ID to the one we were given by RPC.
             playerInstance.mNetworkId = id;
             playerInstance.Name = id.ToString();
-            playerInstance.mNetworkId = id;
             GD.Print($"Created player for client {playerInstance.Name}");
         }
         AddChild(playerInstance);

@@ -9,7 +9,7 @@ class Global : Node {
     [Signal]
     delegate void ToggleNetworkSetup(bool toggle);
 
-    private Godot.Node mPreloads = (Godot.Node)((GDScript)GD.Load("res://scripts/Preloads.gd")).New();
+    public Godot.Node mPreloads { get; private set; } = (Godot.Node)((GDScript)GD.Load("res://scripts/Preloads.gd")).New();
 
     /// <summary>
     /// True if something should be capturing input (player should not move).
