@@ -112,6 +112,7 @@ Snapshots/second: {mPacketUpdateRate}";
         base._Ready();
 
         mGlobal = GetNode<Global>("/root/Global");
+        mGlobal.GetClientManager().mCurScene = this;
 
         mPlayer = (PackedScene)mGlobal.mPreloads.Get("player");
         mDebugOverlay = mGlobal.MkInstance<DebugOverlay>("debug_overlay");
@@ -414,6 +415,9 @@ Snapshots/second: {mPacketUpdateRate}";
     public override void _ExitTree() {
         base._ExitTree();
 
+        // Inform the client manager that we're no longer the scene.
+        mGlobal.GetClientManager().mCurScene = null;
+
         mDebugOverlay.Remove(this);
         RemoveChild(mDebugOverlay);
         mDebugOverlay.QueueFree();
@@ -530,7 +534,6 @@ Snapshots/second: {mPacketUpdateRate}";
     /// <summary>
     /// Receive world state from the server. Used only by the client.
     /// </summary>
-    [Puppet]
     public void RecvWorldState(Snap input) {
         mPacketCounter++;
         mGotPacketThisTick = true;

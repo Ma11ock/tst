@@ -8,6 +8,8 @@ class ClientManager : NetworkManager {
     public int mPort { get; set; } = 0;
     public string mAddress { get; set; } = "";
 
+    public Scene mCurScene = null;
+
     public override void _Ready() {
         base._Ready();
         GD.Print($"Starting client on {mAddress}:{mPort}...");
@@ -23,8 +25,7 @@ class ClientManager : NetworkManager {
         Name = GetTree().GetNetworkUniqueId().ToString();
     }
 
-    public override void _ExitTree()
-    {
+    public override void _ExitTree() {
         base._ExitTree();
         GD.Print("Ending client session");
     }
@@ -45,6 +46,11 @@ class ClientManager : NetworkManager {
 
     [Puppet]
     public void RecvClientData(Snap snapshot) {
+        if(mCurScene == null) {
+            return;
+        }
+
+        mCurScene.RecvWorldState(snapshot);
     }
 
     public override void _Process(float delta) {

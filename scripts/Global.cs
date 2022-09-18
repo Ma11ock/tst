@@ -30,4 +30,6 @@ class Global : Node {
     public T MkInstance<T>(string name)
         where T : Godot.Node => (T)((PackedScene) mPreloads.Get(name)).Instance();
 
+
+    public ClientManager GetClientManager() => GetNode<ClientManager>($"/root/{GetTree().GetNetworkUniqueId()}");
 }

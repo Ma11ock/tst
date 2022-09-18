@@ -164,20 +164,8 @@ public struct Input {
 /// </item>
 /// </list>
 /// </summary>
-public class Player : Tst.QuakeMover, Tst.Debuggable {
+public class Player : Tst.QuakeNetPlayer, Tst.Debuggable {
     // Children nodes.
-    /// <summary>
-    /// Body reference.
-    /// </summary>
-    private Godot.Spatial mBody = null;
-    /// <summary>
-    /// Head reference.
-    /// </summary>
-    private Godot.Spatial mHead = null;
-    /// <summary>
-    /// Camera reference.
-    /// </summary>
-    private Godot.Camera mCamera = null;
     /// <summary>
     /// Model reference.
     /// </summary>
@@ -191,11 +179,6 @@ public class Player : Tst.QuakeMover, Tst.Debuggable {
     /// Queue of player inputs. Used only by the server.
     /// </summary>
     private Queue<Snap> mPlayerInputQueue = null;
-
-    /// <summary>
-    /// Last state predicted by the client. Only used by the client's real player.
-    /// </summary>
-    private Snap mLastPredictedState = null;
 
     /// <summary>
     /// Input counter used to track which inputs the server has processed. Used only by the client's
@@ -212,34 +195,6 @@ public class Player : Tst.QuakeMover, Tst.Debuggable {
     /// Input struct for the current frame.
     /// </summary>
     private Tst.Input mInputs = new Tst.Input(0F, 0F, 0F, 0F, false);
-    /// <summary>
-    /// True if this player instance is client's player character.
-    /// </summary>
-    public bool mIsRealPlayer { get; private set; } = false;
-
-    /// <summary>
-    /// Mark this player as being the client's player.
-    /// </summary>
-    public void SetRealPlayer() {
-        mIsRealPlayer = true;
-    }
-
-    /// <summary>
-    /// Real id of the network.
-    /// </summary>
-    private int _mNetworkId = 0;
-
-    /// <summary>
-    /// Id of the network. Only settable once.
-    /// </summary>
-    public int mNetworkId {
-        get => _mNetworkId;
-        set {
-            if (_mNetworkId == 0) {
-                _mNetworkId = value;
-            }
-        }
-    }
 
     /// <summary>
     /// Reference to the Scene's debug overlay.
@@ -374,9 +329,6 @@ Vertical velocity: {mVerticalVelocity}";
             Util.ChangeXY(mCamera.Rotation, mHead.Rotation.x, mBody.Rotation.y + mBodyEulerY);
     }
 
-    private void SimulatePhysics(float delta, bool dummyInput = false) {
-    }
-
     public override void _ExitTree() {
         base._ExitTree();
 
@@ -384,21 +336,6 @@ Vertical velocity: {mVerticalVelocity}";
             mDebugOverlay.Remove(this);
         }
     }
-
-    private Snap SnapshotState() => new Snap() {
-        {  "gt",                    GlobalTransform},
-        { "hgt",              mHead.GlobalTransform},
-        { "bgt",              mBody.GlobalTransform},
-        { "vel",                          mVelocity},
-        { "ajp",                          mAutoJump},
-        {"grav",                        mGravityVec},
-        {"snap",                              mSnap},
-        {"vvel",                  mVerticalVelocity},
-        {"wdir",                           mWishDir},
-        {  "ts", OS.GetSystemTimeMsecs().ToString()},
-        {"tick",                mCurTick.ToString()},
-        { "iid",              mInputs.id.ToString()}
-    };
 
     public override void _PhysicsProcess(float delta) {
         base._PhysicsProcess(delta);
@@ -494,7 +431,7 @@ Vertical velocity: {mVerticalVelocity}";
             return;
         }
         // Our current client-predicted state is used to interpolate to the new one.
-        mLastPredictedState = SnapshotState();
+        mLastPredictedState = Snapshot();
         UpdatePlayer(recv);
         ulong acks = Util.TryGetVOr(recv, "iid", ulong.MaxValue);
         var tmp = mInputs;
@@ -506,7 +443,6 @@ Vertical velocity: {mVerticalVelocity}";
                 mInputs = input;
                 MoveHead();
                 // TODO do not hardcode (1/128).
-                SimulatePhysics((1F / 128F), true);
             } else {
                 nRm++;
             }
@@ -516,7 +452,7 @@ Vertical velocity: {mVerticalVelocity}";
     }
 
     public void Lerp(Transform wholeTo, Transform headTo, Transform bodyTo, float factor) {
-        Snap oldPlayerDat = mLastPredictedState;
+        Snap oldPlayerDat = null;// mLastPredictedState;
         Transform oldPosition = (Transform)oldPlayerDat["gt"];
         GlobalTransform = oldPosition.InterpolateWith(wholeTo, factor);
 
@@ -597,5 +533,5 @@ Vertical velocity: {mVerticalVelocity}";
         mSceneRef.SendPlayerInput(send);
     }
 
-    private void SendPlayerState() => mSceneRef.SendPlayerState(mNetworkId, SnapshotState());
+    private void SendPlayerState() => mSceneRef.SendPlayerState(mNetworkId, new Snap());
 }

@@ -1,0 +1,5 @@
+using Godot;
+
+interface INetPlayer {
+
+}

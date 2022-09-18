@@ -17,8 +17,8 @@ public interface IQuakeMove {
 
     void Simulate(float delta);
 
-        bool QueueJump();
-    }
+    bool QueueJump();
+}
 
 public abstract class QuakeMover : Godot.KinematicBody, IQuakeMove {
     protected Tst.CVarCollection mCvars = null;
@@ -27,6 +27,19 @@ public abstract class QuakeMover : Godot.KinematicBody, IQuakeMove {
     protected Vector3 mGravityVec = Vector3.Zero;
     protected float mVerticalVelocity = 0F;  // Vertical component of velocity.
 
+    // Node references.
+    /// <summary>
+    /// Body reference.
+    /// </summary>
+    protected Godot.Spatial mBody = null;
+    /// <summary>
+    /// Head reference.
+    /// </summary>
+    protected Godot.Spatial mHead = null;
+    /// <summary>
+    /// Camera reference.
+    /// </summary>
+    protected Godot.Camera mCamera = null;
     // Quake physics objects.
     /// <summary>
     /// Gravity acceleration.
@@ -131,10 +144,6 @@ public abstract class QuakeMover : Godot.KinematicBody, IQuakeMove {
     /// </summary>
     [Export]
     protected float mMaxSpeed = 10F;
-
-    public override void _Ready() {
-        base._Ready();
-    }
 
     public Vector3 Accelerate(Vector3 wishDir, Vector3 velocity, float acceleration, float maxSpeed,
                               float delta) {
@@ -415,6 +424,6 @@ public abstract class QuakeMover : Godot.KinematicBody, IQuakeMove {
             MoveAndSlideWithSnap(mVelocity, mSnap, Vector3.Up, false, 4, Mathf.Deg2Rad(46), false);
     }
 
-        public abstract bool QueueJump();
-    }
+    public abstract bool QueueJump();
+}
 }
